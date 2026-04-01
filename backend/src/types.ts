@@ -38,6 +38,8 @@ export type StreamEvent =
   | { type: "reasoning"; content: string }
   | { type: "text"; content: string }
   | { type: "tool_call_start"; id: string; name: string; arguments: Record<string, unknown> }
+  | { type: "tool_call_delta"; id: string; name: string; arguments_delta: string }
+  | { type: "tool_call_end"; id: string; arguments: Record<string, unknown> }
   | { type: "tool_result"; id: string; name: string; result: string }
   | { type: "error"; content: string }
   | { type: "done" };

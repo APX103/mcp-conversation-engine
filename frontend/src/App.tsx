@@ -3,11 +3,12 @@ import { useState, useRef, useEffect, useCallback } from "react";
 // ── Types ──
 
 interface StreamEvent {
-  type: "reasoning" | "text" | "tool_call_start" | "tool_result" | "error" | "done";
+  type: "reasoning" | "text" | "tool_call_start" | "tool_call_delta" | "tool_call_end" | "tool_result" | "error" | "done";
   content?: string;
   id?: string;
   name?: string;
   arguments?: Record<string, unknown>;
+  arguments_delta?: string;
   result?: string;
 }
 
@@ -17,6 +18,7 @@ interface ToolCallItem {
   arguments: Record<string, unknown>;
   result: string;
   running: boolean;
+  argumentsDelta?: string;
 }
 
 interface Message {
@@ -92,6 +94,12 @@ function ToolCallBlock({ tc }: { tc: ToolCallItem }) {
   const shortName = displayName(tc.name);
   const preview = argPreview(tc.arguments);
   const isRunning = tc.running;
+  const isStreaming = !!tc.argumentsDelta;
+
+  // During streaming, show the raw delta JSON
+  const displayArgs = isStreaming
+    ? tc.argumentsDelta!
+    : JSON.stringify(tc.arguments, null, 2);
 
   return (
     <div style={styles.toolBlock}>
@@ -105,8 +113,12 @@ function ToolCallBlock({ tc }: { tc: ToolCallItem }) {
         <ChevronIcon open={open} />
         <span style={styles.toolLabel}>
           <span style={styles.toolNameText}>{shortName}</span>
-          {preview && !isRunning && <span style={styles.toolPreview}>{preview}</span>}
-          {isRunning && <span style={styles.toolRunning}>running...</span>}
+          {isStreaming ? (
+            <span style={styles.toolRunning}>receiving args...</span>
+          ) : preview && !isRunning ? (
+            <span style={styles.toolPreview}>{preview}</span>
+          ) : null}
+          {!isStreaming && isRunning && <span style={styles.toolRunning}>running...</span>}
         </span>
       </div>
 
@@ -116,7 +128,7 @@ function ToolCallBlock({ tc }: { tc: ToolCallItem }) {
           {/* Arguments */}
           <div style={styles.detailSection}>
             <div style={styles.detailLabel}>Arguments</div>
-            <pre style={styles.codeBlock}>{JSON.stringify(tc.arguments, null, 2)}</pre>
+            <pre style={styles.codeBlock}>{displayArgs}</pre>
           </div>
 
           {/* Result */}
@@ -128,7 +140,7 @@ function ToolCallBlock({ tc }: { tc: ToolCallItem }) {
           )}
 
           {/* Running indicator */}
-          {isRunning && (
+          {isRunning && !isStreaming && (
             <div style={{ ...styles.detailSection, color: "#666", fontStyle: "italic" }}>
               Waiting for result...
             </div>
@@ -240,8 +252,34 @@ export default function App() {
                   arguments: event.arguments ?? {},
                   result: "",
                   running: true,
+                  argumentsDelta: "",
                 });
                 break;
+              case "tool_call_delta": {
+                if (last.toolCalls) {
+                  const idx = last.toolCalls.findIndex((t) => t.id === event.id);
+                  if (idx >= 0) {
+                    last.toolCalls[idx] = {
+                      ...last.toolCalls[idx],
+                      argumentsDelta: (last.toolCalls[idx] as any).argumentsDelta + (event.arguments_delta ?? ""),
+                    };
+                  }
+                }
+                break;
+              }
+              case "tool_call_end": {
+                if (last.toolCalls) {
+                  const idx = last.toolCalls.findIndex((t) => t.id === event.id);
+                  if (idx >= 0) {
+                    last.toolCalls[idx] = {
+                      ...last.toolCalls[idx],
+                      arguments: event.arguments ?? {},
+                      argumentsDelta: undefined,
+                    };
+                  }
+                }
+                break;
+              }
               case "tool_result": {
                 if (last.toolCalls) {
                   const idx = last.toolCalls.findIndex((t) => t.id === event.id);

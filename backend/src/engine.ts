@@ -89,74 +89,112 @@ export class ConversationEngine {
         ...this.toOpenAIMessages(messages),
       ];
 
-      const response = await this.openai.chat.completions.create({
+      const stream = await this.openai.chat.completions.create({
         model: this.model,
         messages: apiMessages,
         tools: openaiTools.length > 0 ? openaiTools : undefined,
-        stream: false, // We handle our own streaming via yield
+        stream: true,
       });
 
-      const choice = response.choices[0];
-      if (!choice) {
-        yield { type: "error", content: "No response from LLM" };
-        return;
+      // Accumulators for streamed content
+      let fullContent = "";
+      let fullReasoning = "";
+      // Map: tool call index → { id, name, argumentsStr }
+      const toolCallAccum = new Map<number, { id: string; name: string; argumentsStr: string }>();
+
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta;
+        if (!delta) continue;
+
+        // Stream reasoning content (Chain of Thought)
+        const reasoningDelta = (delta as any).reasoning_content as string | undefined;
+        if (reasoningDelta) {
+          fullReasoning += reasoningDelta;
+          yield { type: "reasoning", content: reasoningDelta };
+        }
+
+        // Stream text content
+        if (delta.content) {
+          fullContent += delta.content;
+          yield { type: "text", content: delta.content };
+        }
+
+        // Stream tool calls
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index;
+            let entry = toolCallAccum.get(idx);
+
+            if (!entry) {
+              entry = { id: tc.id ?? "", name: tc.function?.name ?? "", argumentsStr: "" };
+              toolCallAccum.set(idx, entry);
+              yield {
+                type: "tool_call_start",
+                id: entry.id,
+                name: entry.name,
+                arguments: {},
+              };
+            }
+
+            if (tc.function?.name && !entry.name) {
+              entry.name = tc.function.name;
+            }
+            if (tc.id && !entry.id) {
+              entry.id = tc.id;
+            }
+            if (tc.function?.arguments) {
+              entry.argumentsStr += tc.function.arguments;
+              yield {
+                type: "tool_call_delta",
+                id: entry.id,
+                name: entry.name,
+                arguments_delta: tc.function.arguments,
+              };
+            }
+          }
+        }
       }
 
-      const assistantMsg = choice.message;
-
-      // Text content
-      if (assistantMsg.content) {
-        yield { type: "text", content: assistantMsg.content };
-      }
-
-      // Reasoning content (Chain of Thought, e.g. GLM-4.7 / GLM-5)
-      const reasoningContent = (choice.message as any).reasoning_content as string | undefined;
-      if (reasoningContent) {
-        yield { type: "reasoning", content: reasoningContent };
-      }
-
-      // Save assistant message
+      // Build assistant message for history
       const chatMsg: ChatMessage = {
         role: "assistant",
-        content: assistantMsg.content ?? "",
+        content: fullContent,
       };
 
-      // Check for tool calls
-      if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
-        chatMsg.tool_calls = assistantMsg.tool_calls.map((tc) => ({
-          id: tc.id,
-          name: tc.function.name,
-          arguments: tc.function.arguments,
-        }));
-        messages.push(chatMsg);
+      // If there were tool calls, execute them
+      if (toolCallAccum.size > 0) {
+        const toolCalls: ToolCall[] = [];
+        for (const [idx, entry] of toolCallAccum) {
+          const parsedArgs: Record<string, unknown> = entry.argumentsStr
+            ? JSON.parse(entry.argumentsStr)
+            : {};
 
-        // Execute each tool call
-        for (const tc of assistantMsg.tool_calls) {
-          const args = JSON.parse(tc.function.arguments);
-          const toolName = tc.function.name;
+          toolCalls.push({
+            id: entry.id,
+            name: entry.name,
+            arguments: entry.argumentsStr,
+          });
 
-          yield {
-            type: "tool_call_start",
-            id: tc.id,
-            name: toolName,
-            arguments: args,
-          };
+          yield { type: "tool_call_end", id: entry.id, arguments: parsedArgs };
 
-          const result = await this.executeTool(toolName, args);
+          const result = await this.executeTool(entry.name, parsedArgs);
 
           yield {
             type: "tool_result",
-            id: tc.id,
-            name: toolName,
+            id: entry.id,
+            name: entry.name,
             result,
           };
 
           messages.push({
             role: "tool",
             content: result,
-            tool_call_id: tc.id,
+            tool_call_id: entry.id,
           });
         }
+
+        chatMsg.tool_calls = toolCalls;
+        messages.push(chatMsg);
 
         // Loop to feed results back to LLM
         continue;
