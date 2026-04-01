@@ -1,0 +1,24 @@
+{
+  "llm": {
+    "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+    "apiKey": "YOUR_API_KEY",
+    "model": "GLM-4.7"
+  },
+  "mcpServers": {
+    "web-search-prime": {
+      "transport": "http",
+      "url": "https://open.bigmodel.cn/api/mcp/web_search_prime/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    },
+    "calculator": {
+      "command": "node",
+      "args": ["./example-mcp-server/index.js"],
+      "transport": "stdio"
+    }
+  },
+  "server": {
+    "port": 3000
+  }
+}
