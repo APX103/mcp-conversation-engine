@@ -7,7 +7,7 @@
 - **后端**: Node.js + Express + TypeScript, OpenAI SDK（兼容智谱 GLM）
 - **前端**: React + Vite + TypeScript, 单页聊天 UI
 - **MCP**: @modelcontextprotocol/sdk, stdio transport
-- **搜索**: Tavily API
+- **搜索**: web-search-prime MCP Server（智谱）
 
 ## 快速开始
 
@@ -26,20 +26,7 @@ cd example-mcp-server && npm install && cd ..
 cp config.example.json config.json
 ```
 
-编辑 `config.json`，填入你的 API Key：
-
-```json
-{
-  "llm": {
-    "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
-    "apiKey": "你的智谱 API Key",
-    "model": "glm-4-flash"
-  },
-  "tavily": {
-    "apiKey": "你的 Tavily API Key（可选，用于网络搜索）"
-  }
-}
-```
+编辑 `config.json`，填入你的 API Key（参考 `config.example.json`）。
 
 ### 3. 一键启动
 
