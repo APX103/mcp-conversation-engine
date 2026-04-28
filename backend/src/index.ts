@@ -22,8 +22,10 @@ app.get("/", (_req, res) => {
     status: "running",
     endpoints: [
       { path: "POST /api/auth/login", desc: "用户名登录（不存在则自动创建）" },
+      { path: "POST /api/sessions", desc: "创建新会话" },
+      { path: "GET /api/sessions", desc: "获取用户会话列表 (?userId=xxx)" },
+      { path: "GET /api/sessions/:id", desc: "获取会话消息历史" },
       { path: "POST /api/chat", desc: "发送消息，SSE 流式返回" },
-      { path: "GET /api/sessions/:id", desc: "获取会话历史" },
       { path: "GET /api/health", desc: "健康检查" },
     ],
   });
@@ -44,28 +46,62 @@ app.post("/api/auth/login", (req, res) => {
   }
 });
 
+// POST /api/sessions — create a new session
+app.post("/api/sessions", async (req, res) => {
+  const { userId, title } = req.body as { userId?: string; title?: string };
+  if (!userId || typeof userId !== "string") {
+    res.status(400).json({ error: "userId is required" });
+    return;
+  }
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  try {
+    const sessionId = await db.createSession(userId.trim(), title);
+    res.json({ sessionId, userId: userId.trim(), title: title || "New Chat" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/sessions — list sessions for a user
+app.get("/api/sessions", async (req, res) => {
+  const userId = req.query.userId as string;
+  if (!userId) {
+    res.status(400).json({ error: "userId query parameter is required" });
+    return;
+  }
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  try {
+    const sessions = await db.listSessions(userId);
+    res.json({ sessions });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/chat — SSE streaming
 app.post("/api/chat", async (req, res) => {
-  const { message, sessionId = "default", username } = req.body as {
+  const { message, sessionId } = req.body as {
     message: string;
     sessionId?: string;
-    username?: string;
   };
-
-  // 优先用 username 作为会话隔离键
-  const effectiveSessionId = username?.trim() || sessionId;
 
   if (!message) {
     res.status(400).json({ error: "message is required" });
     return;
   }
 
-  if (!effectiveSessionId) {
-    res.status(400).json({ error: "username or sessionId is required" });
+  if (!sessionId) {
+    res.status(400).json({ error: "sessionId is required" });
     return;
   }
 
-  await engine.loadSession(effectiveSessionId);
+  await engine.loadSession(sessionId);
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -73,22 +109,59 @@ app.post("/api/chat", async (req, res) => {
   res.flushHeaders();
 
   try {
-    for await (const event of engine.run(message, effectiveSessionId)) {
+    for await (const event of engine.run(message, sessionId)) {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     }
   } catch (err: any) {
     res.write(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`);
   } finally {
     res.end();
-    await engine.saveSession(effectiveSessionId);
+    await engine.saveSession(sessionId);
   }
 });
 
 // GET /api/sessions/:id — get session messages
 app.get("/api/sessions/:id", async (req, res) => {
-  await engine.loadSession(req.params.id);
-  const messages = engine.getOrCreateSession(req.params.id);
-  res.json({ messages });
+  const sid = req.params.id;
+  await engine.loadSession(sid);
+  const messages = engine.getOrCreateSession(sid);
+  let title = "New Chat";
+  if (db) {
+    const doc = await db.getSession(sid).catch(() => null);
+    if (doc) title = doc.title;
+  }
+  res.json({ sessionId: sid, title, messages });
+});
+
+// PATCH /api/sessions/:id — update session (title)
+app.patch("/api/sessions/:id", async (req, res) => {
+  const sid = req.params.id;
+  const { title } = req.body as { title?: string };
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  try {
+    if (title) await db.updateSessionTitle(sid, title);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/sessions/:id — delete a session
+app.delete("/api/sessions/:id", async (req, res) => {
+  const sid = req.params.id;
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  try {
+    await db.deleteSession(sid);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Health check

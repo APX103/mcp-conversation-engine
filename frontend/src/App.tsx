@@ -31,6 +31,13 @@ interface Message {
   loading?: boolean;
 }
 
+interface Session {
+  sessionId: string;
+  userId: string;
+  title: string;
+  updatedAt: number;
+}
+
 // ── Helpers ──
 
 /** Strip "mcp__servername__" prefix for cleaner display */
@@ -47,6 +54,17 @@ function argPreview(args: Record<string, unknown>): string {
     }
   }
   return "";
+}
+
+/** Format timestamp to readable string */
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const h = d.getHours().toString().padStart(2, "0");
+  const m = d.getMinutes().toString().padStart(2, "0");
+  if (isToday) return `${h}:${m}`;
+  return `${d.getMonth() + 1}/${d.getDate()} ${h}:${m}`;
 }
 
 // ── Components ──
@@ -197,6 +215,10 @@ export default function App() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [username, setUsername] = useState<string>(() => localStorage.getItem("username") || "");
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string>("");
+  const [hoveredSessionId, setHoveredSessionId] = useState<string>("");
+  const [menuOpenSessionId, setMenuOpenSessionId] = useState<string>("");
   const [loginInput, setLoginInput] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
@@ -210,19 +232,68 @@ export default function App() {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // Load conversation history after login
+  // Load sessions after login
   useEffect(() => {
     if (!username) return;
-    fetch(`${API_BASE}/api/sessions/${encodeURIComponent(username)}`)
-      .then((res) => res.json())
-      .then((data) => {
-        const history = convertHistory(data.messages || []);
-        setMessages(history);
-      })
-      .catch(() => {
-        // ignore
-      });
+    loadSessions(username);
   }, [username]);
+
+  const loadSessions = async (userId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/sessions?userId=${encodeURIComponent(userId)}`);
+      const data = await res.json();
+      const list: Session[] = (data.sessions || []).map((s: any) => ({
+        sessionId: s.sessionId,
+        userId: s.userId,
+        title: s.title || "New Chat",
+        updatedAt: s.updatedAt ? new Date(s.updatedAt).getTime() : Date.now(),
+      }));
+      setSessions(list);
+      if (list.length > 0) {
+        // Switch to the most recently updated session
+        await switchSession(list[0].sessionId);
+      } else {
+        // Auto-create first session
+        await createSession(userId);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const createSession = async (userId: string, title?: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, title }),
+      });
+      const data = await res.json();
+      const newSession: Session = {
+        sessionId: data.sessionId,
+        userId: data.userId,
+        title: data.title,
+        updatedAt: Date.now(),
+      };
+      setSessions((prev) => [newSession, ...prev]);
+      await switchSession(data.sessionId);
+    } catch {
+      // ignore
+    }
+  };
+
+  const switchSession = async (sessionId: string) => {
+    setCurrentSessionId(sessionId);
+    setMessages([]);
+    try {
+      const res = await fetch(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}`);
+      const data = await res.json();
+      const history = convertHistory(data.messages || []);
+      setMessages(history);
+    } catch {
+      setMessages([]);
+    }
+  };
 
   const handleLogin = async () => {
     const name = loginInput.trim();
@@ -255,7 +326,35 @@ export default function App() {
   const handleLogout = () => {
     localStorage.removeItem("username");
     setUsername("");
+    setSessions([]);
+    setCurrentSessionId("");
+    setHoveredSessionId("");
+    setMenuOpenSessionId("");
     setMessages([]);
+  };
+
+  const handleDeleteSession = async (sessionId: string) => {
+    if (!window.confirm("确定删除这个对话吗？")) return;
+    try {
+      await fetch(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}`, {
+        method: "DELETE",
+      });
+      setSessions((prev) => prev.filter((s) => s.sessionId !== sessionId));
+      setMenuOpenSessionId("");
+      if (currentSessionId === sessionId) {
+        setCurrentSessionId("");
+        setMessages([]);
+        // Switch to another session if available
+        const remaining = sessions.filter((s) => s.sessionId !== sessionId);
+        if (remaining.length > 0) {
+          await switchSession(remaining[0].sessionId);
+        } else if (username) {
+          await createSession(username);
+        }
+      }
+    } catch {
+      // ignore
+    }
   };
 
   // Convert backend ChatMessage[] to frontend Message[]
@@ -273,7 +372,6 @@ export default function App() {
           result: "",
           running: false,
         }));
-        // Merge subsequent tool messages into matching toolCalls
         let j = i + 1;
         while (j < serverMessages.length && serverMessages[j].role === "tool") {
           const toolMsg = serverMessages[j];
@@ -298,6 +396,19 @@ export default function App() {
     setInput("");
     setSending(true);
 
+    // Auto-rename session on first message
+    if (messages.length === 0) {
+      const title = text.length > 20 ? text.slice(0, 20) + "..." : text;
+      fetch(`${API_BASE}/api/sessions/${encodeURIComponent(currentSessionId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+      }).catch(() => {});
+      setSessions((prev) =>
+        prev.map((s) => (s.sessionId === currentSessionId ? { ...s, title } : s))
+      );
+    }
+
     const userMsg: Message = { role: "user", content: text };
     const assistantMsg: Message = { role: "assistant", content: "", toolCalls: [], loading: true };
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
@@ -306,7 +417,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, username }),
+        body: JSON.stringify({ message: text, sessionId: currentSessionId }),
       });
 
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
@@ -468,9 +579,9 @@ export default function App() {
     );
   }
 
-  // 已登录 — 显示聊天界面
+  // 已登录 — 显示侧边栏 + 聊天界面
   return (
-    <div style={styles.container}>
+    <div style={styles.layout}>
       {/* CSS keyframes + Markdown styles */}
       <style>{`
         @keyframes spin {
@@ -500,73 +611,127 @@ export default function App() {
         .markdown-body code { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12.5px; background: #f0f0f0; padding: 1px 4px; border-radius: 3px; }
         .markdown-body pre { background: #f5f5f5; padding: 10px; border-radius: 6px; overflow: auto; max-height: 300px; margin: 8px 0; border: 1px solid #eee; }
         .markdown-body pre code { background: none; padding: 0; }
+        .session-item:hover { background: #f5f5f5; }
+        .session-item-active { background: #f0f7ff !important; }
       `}</style>
 
-      <header style={styles.header}>
-        <h1 style={styles.headerTitle}>MCP Conversation Engine</h1>
-        <div style={styles.userInfo}>
+      {/* Sidebar */}
+      <div style={styles.sidebar}>
+        <div style={styles.sidebarHeader}>
+          <span style={styles.sidebarTitle}>MCP Engine</span>
+          <button style={styles.newChatBtn} onClick={() => createSession(username)}>
+            + 新对话
+          </button>
+        </div>
+        <div style={styles.sessionList}>
+          {sessions.map((s) => {
+            const showMenu = hoveredSessionId === s.sessionId || menuOpenSessionId === s.sessionId;
+            const isMenuOpen = menuOpenSessionId === s.sessionId;
+            return (
+              <div
+                key={s.sessionId}
+                className={s.sessionId === currentSessionId ? "session-item session-item-active" : "session-item"}
+                style={{ ...styles.sessionItem, position: "relative" }}
+                onMouseEnter={() => setHoveredSessionId(s.sessionId)}
+                onMouseLeave={() => setHoveredSessionId("")}
+                onClick={() => switchSession(s.sessionId)}
+              >
+                <div style={styles.sessionTitle}>{s.title}</div>
+                <div style={styles.sessionTime}>{formatTime(s.updatedAt)}</div>
+                {showMenu && (
+                  <button
+                    style={styles.sessionMenuBtn}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpenSessionId(isMenuOpen ? "" : s.sessionId);
+                    }}
+                  >
+                    ⋮
+                  </button>
+                )}
+                {isMenuOpen && (
+                  <div style={styles.sessionMenuDropdown}>
+                    <button
+                      style={styles.sessionMenuDelete}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteSession(s.sessionId);
+                      }}
+                    >
+                      🗑 删除
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div style={styles.sidebarFooter}>
           <span style={styles.username}>{username}</span>
           <button style={styles.logoutBtn} onClick={handleLogout}>
             退出
           </button>
         </div>
-      </header>
-
-      <div style={styles.messages}>
-        {messages.length === 0 && (
-          <div style={styles.empty}>
-            <div style={styles.emptyIcon}>MCP</div>
-            <div>Send a message to start a conversation.</div>
-          </div>
-        )}
-        {messages.map((msg, i) => (
-          <div key={i} style={msg.role === "user" ? styles.userRow : styles.assistantRow}>
-            <div style={styles.avatar}>
-              {msg.role === "user" ? "You" : "AI"}
-            </div>
-            {msg.role === "user" ? (
-              <div style={styles.userBubble}>{msg.content}</div>
-            ) : (
-              <div style={styles.assistantBubble}>
-                {msg.reasoning && <ReasoningBlock content={msg.reasoning} />}
-                {msg.content && <MarkdownContent content={msg.content} />}
-                {msg.toolCalls?.map((tc, j) => (
-                  <ToolCallBlock key={tc.id || j} tc={tc} />
-                ))}
-                {msg.loading && !msg.content && !msg.toolCalls?.length && (
-                  <span style={styles.typing}><Spinner /> thinking...</span>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-        <div ref={bottomRef} />
       </div>
 
-      <form
-        style={styles.inputBar}
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-      >
-        <input
-          style={styles.input}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Type a message..."
-          disabled={sending}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
+      {/* Main chat area */}
+      <div style={styles.main}>
+        <div style={styles.messages}>
+          {messages.length === 0 && (
+            <div style={styles.empty}>
+              <div style={styles.emptyIcon}>MCP</div>
+              <div>Send a message to start a conversation.</div>
+            </div>
+          )}
+          {messages.map((msg, i) => (
+            <div key={i} style={msg.role === "user" ? styles.userRow : styles.assistantRow}>
+              <div style={styles.avatar}>
+                {msg.role === "user" ? "You" : "AI"}
+              </div>
+              {msg.role === "user" ? (
+                <div style={styles.userBubble}>{msg.content}</div>
+              ) : (
+                <div style={styles.assistantBubble}>
+                  {msg.reasoning && <ReasoningBlock content={msg.reasoning} />}
+                  {msg.content && <MarkdownContent content={msg.content} />}
+                  {msg.toolCalls?.map((tc, j) => (
+                    <ToolCallBlock key={tc.id || j} tc={tc} />
+                  ))}
+                  {msg.loading && !msg.content && !msg.toolCalls?.length && (
+                    <span style={styles.typing}><Spinner /> thinking...</span>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+
+        <form
+          style={styles.inputBar}
+          onSubmit={(e) => {
+            e.preventDefault();
+            send();
           }}
-        />
-        <button style={{ ...styles.button, opacity: sending || !input.trim() ? 0.5 : 1 }} type="submit" disabled={sending || !input.trim()}>
-          Send
-        </button>
-      </form>
+        >
+          <input
+            style={styles.input}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Type a message..."
+            disabled={sending}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+          />
+          <button style={{ ...styles.button, opacity: sending || !input.trim() ? 0.5 : 1 }} type="submit" disabled={sending || !input.trim()}>
+            Send
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -574,29 +739,136 @@ export default function App() {
 // ── Styles ──
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {
+  layout: {
     display: "flex",
-    flexDirection: "column",
+    flexDirection: "row",
     height: "100vh",
     fontFamily: "'Inter', 'SF Pro Text', system-ui, -apple-system, sans-serif",
-    background: "#ffffff",
+    background: "#f7f7f8",
     color: "#1a1a1a",
   },
 
-  // Header
-  header: {
-    padding: "10px 20px",
+  // Sidebar
+  sidebar: {
+    width: 260,
+    display: "flex",
+    flexDirection: "column",
+    background: "#fff",
+    borderRight: "1px solid #e5e5e5",
+    flexShrink: 0,
+  },
+  sidebarHeader: {
+    padding: "14px 16px",
     borderBottom: "1px solid #e5e5e5",
-    background: "#fafafa",
     display: "flex",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: 8,
   },
-  headerTitle: {
-    fontSize: "14px",
-    fontWeight: 600,
+  sidebarTitle: {
+    fontSize: "15px",
+    fontWeight: 700,
+    color: "#1a1a1a",
+  },
+  newChatBtn: {
+    padding: "5px 10px",
+    borderRadius: "6px",
+    border: "1px solid #d1d5db",
+    background: "#fff",
     color: "#333",
-    margin: 0,
+    cursor: "pointer",
+    fontSize: "12px",
+    fontWeight: 500,
+    whiteSpace: "nowrap",
+  },
+  sessionList: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "8px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+  },
+  sessionItem: {
+    padding: "10px 12px",
+    borderRadius: "8px",
+    cursor: "pointer",
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+    transition: "background 0.15s",
+  },
+  sessionItemActive: {
+    background: "#f0f7ff",
+  },
+  sessionTitle: {
+    fontSize: "13px",
+    fontWeight: 500,
+    color: "#1a1a1a",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  sessionTime: {
+    fontSize: "11px",
+    color: "#999",
+  },
+  sessionMenuBtn: {
+    position: "absolute",
+    top: "6px",
+    right: "6px",
+    padding: "2px 6px",
+    borderRadius: "4px",
+    border: "none",
+    background: "transparent",
+    color: "#888",
+    cursor: "pointer",
+    fontSize: "14px",
+    lineHeight: 1,
+    zIndex: 2,
+  },
+  sessionMenuDropdown: {
+    position: "absolute",
+    top: "28px",
+    right: "6px",
+    background: "#fff",
+    border: "1px solid #e5e5e5",
+    borderRadius: "6px",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+    padding: "4px",
+    zIndex: 10,
+    minWidth: "100px",
+  },
+  sessionMenuDelete: {
+    width: "100%",
+    padding: "6px 10px",
+    borderRadius: "4px",
+    border: "none",
+    background: "transparent",
+    color: "#dc2626",
+    cursor: "pointer",
+    fontSize: "13px",
+    textAlign: "left" as const,
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+  },
+  sidebarFooter: {
+    padding: "12px 16px",
+    borderTop: "1px solid #e5e5e5",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+
+  // Main chat area
+  main: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    minWidth: 0,
+    background: "#ffffff",
   },
 
   // Messages area
