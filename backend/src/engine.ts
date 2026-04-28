@@ -93,21 +93,30 @@ export class ConversationEngine {
 
   private fixMessageOrder(msgs: ChatMessage[]): ChatMessage[] {
     const result: ChatMessage[] = [];
-    const toolBuffer: ChatMessage[] = [];
 
-    for (const msg of msgs) {
-      if (msg.role === "tool") {
-        toolBuffer.push(msg);
-      } else if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
+    for (let i = 0; i < msgs.length; i++) {
+      const msg = msgs[i];
+      if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
+        const toolCallIds = new Set(msg.tool_calls.map((tc) => tc.id));
+        const toolsToMove: ChatMessage[] = [];
+        let j = result.length - 1;
+        while (
+          j >= 0 &&
+          result[j].role === "tool" &&
+          result[j].tool_call_id &&
+          toolCallIds.has(result[j].tool_call_id!)
+        ) {
+          toolsToMove.unshift(result[j]);
+          result.splice(j, 1);
+          j--;
+        }
         result.push(msg);
-        result.push(...toolBuffer);
-        toolBuffer.length = 0;
+        result.push(...toolsToMove);
       } else {
         result.push(msg);
       }
     }
 
-    result.push(...toolBuffer);
     return result;
   }
 

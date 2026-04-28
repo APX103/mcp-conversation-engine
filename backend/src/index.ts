@@ -14,6 +14,13 @@ let db: DbManager | undefined;
 
 app.use(cors());
 app.use(express.json());
+app.set("etag", false);
+app.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  next();
+});
 
 // Root
 app.get("/", (_req, res) => {

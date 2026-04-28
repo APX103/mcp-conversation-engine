@@ -298,11 +298,19 @@ export default function App() {
     setCurrentSessionId(sessionId);
     setMessages([]);
     try {
-      const res = await fetch(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}`);
+      const res = await fetch(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        console.error("switchSession HTTP error:", res.status, await res.text());
+        setMessages([]);
+        return;
+      }
       const data = await res.json();
       const history = convertHistory(data.messages || []);
       setMessages(history);
-    } catch {
+    } catch (err) {
+      console.error("switchSession failed:", err);
       setMessages([]);
     }
   };
