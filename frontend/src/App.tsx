@@ -219,6 +219,8 @@ export default function App() {
   const [currentSessionId, setCurrentSessionId] = useState<string>("");
   const [hoveredSessionId, setHoveredSessionId] = useState<string>("");
   const [menuOpenSessionId, setMenuOpenSessionId] = useState<string>("");
+  const [editingSessionId, setEditingSessionId] = useState<string>("");
+  const [renameInput, setRenameInput] = useState("");
   const [loginInput, setLoginInput] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
@@ -330,7 +332,28 @@ export default function App() {
     setCurrentSessionId("");
     setHoveredSessionId("");
     setMenuOpenSessionId("");
+    setEditingSessionId("");
+    setRenameInput("");
     setMessages([]);
+  };
+
+  const handleRenameSession = async (sessionId: string, newTitle: string) => {
+    const trimmed = newTitle.trim();
+    if (!trimmed) return;
+    try {
+      await fetch(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: trimmed }),
+      });
+      setSessions((prev) =>
+        prev.map((s) => (s.sessionId === sessionId ? { ...s, title: trimmed } : s))
+      );
+    } catch {
+      // ignore
+    }
+    setEditingSessionId("");
+    setRenameInput("");
   };
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -636,9 +659,29 @@ export default function App() {
                 onMouseLeave={() => setHoveredSessionId("")}
                 onClick={() => switchSession(s.sessionId)}
               >
-                <div style={styles.sessionTitle}>{s.title}</div>
-                <div style={styles.sessionTime}>{formatTime(s.updatedAt)}</div>
-                {showMenu && (
+                {editingSessionId === s.sessionId ? (
+                  <input
+                    autoFocus
+                    style={styles.sessionRenameInput}
+                    value={renameInput}
+                    onChange={(e) => setRenameInput(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleRenameSession(s.sessionId, renameInput);
+                      if (e.key === "Escape") {
+                        setEditingSessionId("");
+                        setRenameInput("");
+                      }
+                    }}
+                    onBlur={() => handleRenameSession(s.sessionId, renameInput)}
+                  />
+                ) : (
+                  <>
+                    <div style={styles.sessionTitle}>{s.title}</div>
+                    <div style={styles.sessionTime}>{formatTime(s.updatedAt)}</div>
+                  </>
+                )}
+                {showMenu && editingSessionId !== s.sessionId && (
                   <button
                     style={styles.sessionMenuBtn}
                     onClick={(e) => {
@@ -651,6 +694,17 @@ export default function App() {
                 )}
                 {isMenuOpen && (
                   <div style={styles.sessionMenuDropdown}>
+                    <button
+                      style={styles.sessionMenuItem}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenSessionId("");
+                        setEditingSessionId(s.sessionId);
+                        setRenameInput(s.title);
+                      }}
+                    >
+                      ✎ 重命名
+                    </button>
                     <button
                       style={styles.sessionMenuDelete}
                       onClick={(e) => {
@@ -827,6 +881,16 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1,
     zIndex: 2,
   },
+  sessionRenameInput: {
+    width: "100%",
+    padding: "4px 6px",
+    borderRadius: "4px",
+    border: "1px solid #007bff",
+    fontSize: "13px",
+    outline: "none",
+    fontFamily: "inherit",
+    boxSizing: "border-box",
+  },
   sessionMenuDropdown: {
     position: "absolute",
     top: "28px",
@@ -838,6 +902,20 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "4px",
     zIndex: 10,
     minWidth: "100px",
+  },
+  sessionMenuItem: {
+    width: "100%",
+    padding: "6px 10px",
+    borderRadius: "4px",
+    border: "none",
+    background: "transparent",
+    color: "#333",
+    cursor: "pointer",
+    fontSize: "13px",
+    textAlign: "left" as const,
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
   },
   sessionMenuDelete: {
     width: "100%",
