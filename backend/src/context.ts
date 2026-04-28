@@ -55,7 +55,27 @@ export function compressMessages(
   }
 
   const removed = messages.slice(0, messages.length - kept.length);
-  return { kept, removed };
+
+  // Fix orphaned tool messages: a tool message must have its matching
+  // assistant(tool_calls) in kept. If not, demote it to removed.
+  const fixedKept: ChatMessage[] = [];
+  const fixedRemoved = [...removed];
+  for (const msg of kept) {
+    if (msg.role === "tool" && msg.tool_call_id) {
+      const hasParent = fixedKept.some(
+        (m) =>
+          m.role === "assistant" &&
+          m.tool_calls?.some((tc) => tc.id === msg.tool_call_id)
+      );
+      if (!hasParent) {
+        fixedRemoved.push(msg);
+        continue;
+      }
+    }
+    fixedKept.push(msg);
+  }
+
+  return { kept: fixedKept, removed: fixedRemoved };
 }
 
 /**
