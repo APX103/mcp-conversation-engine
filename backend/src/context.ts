@@ -2,7 +2,7 @@ import { encode } from "gpt-tokenizer";
 import type { ChatMessage } from "./types.js";
 
 /** Total token budget for the context window (excluding system prompt) */
-export const HISTORY_BUDGET = 3000;
+export const HISTORY_BUDGET = 8000;
 
 /** Count tokens in a plain string */
 export function countTokens(text: string): number {
@@ -32,9 +32,22 @@ export function countMessagesTokens(messages: ChatMessage[]): number {
 }
 
 /**
+ * Find the start index of the conversation round that ends at `endIndex`.
+ * A round starts at the most recent user message at or before `endIndex`.
+ */
+function findRoundStart(messages: ChatMessage[], endIndex: number): number {
+  let i = endIndex;
+  while (i >= 0 && messages[i].role !== "user") {
+    i--;
+  }
+  return i;
+}
+
+/**
  * Compress messages to fit within budget.
- * Strategy: keep the most recent messages, drop the oldest ones.
- * Returns which messages were kept and which were removed (oldest first).
+ * Strategy: keep the most recent *complete conversation rounds*, drop the oldest ones.
+ * A round starts at a user message and ends just before the next user message.
+ * This ensures we never drop a user message while keeping later assistant/tool messages.
  */
 export function compressMessages(
   messages: ChatMessage[],
@@ -43,21 +56,43 @@ export function compressMessages(
   let total = 0;
   const kept: ChatMessage[] = [];
 
-  // Walk backwards from newest message
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const tokens = countMessageTokens(messages[i]);
-    if (total + tokens <= budget) {
-      kept.unshift(messages[i]);
-      total += tokens;
+  let i = messages.length - 1;
+  while (i >= 0) {
+    const roundStart = findRoundStart(messages, i);
+    if (roundStart < 0) {
+      // No user message found — keep remaining messages as a fragment
+      const fragment = messages.slice(0, i + 1);
+      const fragmentTokens = fragment.reduce(
+        (sum, m) => sum + countMessageTokens(m),
+        0
+      );
+      if (total + fragmentTokens <= budget) {
+        kept.unshift(...fragment);
+      }
+      break;
+    }
+
+    const round = messages.slice(roundStart, i + 1);
+    const roundTokens = round.reduce(
+      (sum, m) => sum + countMessageTokens(m),
+      0
+    );
+
+    if (total + roundTokens <= budget) {
+      kept.unshift(...round);
+      total += roundTokens;
+      i = roundStart - 1;
     } else {
+      // Budget exhausted — drop this round and everything before it
       break;
     }
   }
 
-  const removed = messages.slice(0, messages.length - kept.length);
+  const removedCount = messages.length - kept.length;
+  const removed = messages.slice(0, removedCount);
 
-  // Fix orphaned tool messages: a tool message must have its matching
-  // assistant(tool_calls) in kept. If not, demote it to removed.
+  // Safety: fix any orphaned tool messages (shouldn't happen with round-based
+  // approach, but kept as a defensive guard).
   const fixedKept: ChatMessage[] = [];
   const fixedRemoved = [...removed];
   for (const msg of kept) {
