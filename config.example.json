@@ -1,8 +1,12 @@
 {
   "llm": {
-    "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
-    "apiKey": "YOUR_API_KEY",
-    "model": "GLM-4.7"
+    "baseUrl": "https://api.deepseek.com",
+    "apiKey": "YOUR_DEEPSEEK_API_KEY",
+    "model": "deepseek-v4-pro"
+  },
+  "mongodb": {
+    "uri": "mongodb://localhost:27017",
+    "dbName": "mcp-conversation-engine"
   },
   "mcpServers": {
     "web-search-prime": {

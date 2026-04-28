@@ -28,6 +28,7 @@ export interface ToolCall {
 export interface ChatMessage {
   role: Role;
   content: string;
+  reasoning_content?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
 }
@@ -59,6 +60,10 @@ export interface Config {
     baseUrl: string;
     apiKey: string;
     model: string;
+  };
+  mongodb?: {
+    uri: string;
+    dbName: string;
   };
   mcpServers?: Record<string, McpServerConfig>;
   server: {

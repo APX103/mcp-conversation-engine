@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { Config, ChatMessage, StreamEvent, ToolDef, ToolCall } from "./types.js";
 import { createBuiltinTools } from "./tools.js";
 import { McpManager } from "./mcp.js";
+import type { DbManager } from "./db.js";
 
 const MAX_TOOL_ROUNDS = 10;
 
@@ -41,14 +42,16 @@ export class ConversationEngine {
   private mcp: McpManager;
   private model: string;
   private sessions = new Map<string, ChatMessage[]>();
+  private db?: DbManager;
 
-  constructor(config: Config, mcp: McpManager) {
+  constructor(config: Config, mcp: McpManager, db?: DbManager) {
     this.openai = new OpenAI({
       baseURL: config.llm.baseUrl,
       apiKey: config.llm.apiKey,
     });
     this.model = config.llm.model;
     this.mcp = mcp;
+    this.db = db;
 
     // Monkey-patch allTools to close over current state
     (this as any)._allTools = () => {
@@ -72,6 +75,41 @@ export class ConversationEngine {
       this.sessions.set(sessionId, msgs);
     }
     return msgs;
+  }
+
+  async loadSession(sessionId: string): Promise<void> {
+    if (!this.db || this.sessions.has(sessionId)) return;
+    let msgs = await this.db.loadSession(sessionId);
+    // 修复旧代码产生的错误顺序：[user, tool, assistant(tool_calls)] -> [user, assistant(tool_calls), tool]
+    msgs = this.fixMessageOrder(msgs);
+    this.sessions.set(sessionId, msgs);
+  }
+
+  private fixMessageOrder(msgs: ChatMessage[]): ChatMessage[] {
+    const result: ChatMessage[] = [];
+    const toolBuffer: ChatMessage[] = [];
+
+    for (const msg of msgs) {
+      if (msg.role === "tool") {
+        toolBuffer.push(msg);
+      } else if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
+        result.push(msg);
+        result.push(...toolBuffer);
+        toolBuffer.length = 0;
+      } else {
+        result.push(msg);
+      }
+    }
+
+    result.push(...toolBuffer);
+    return result;
+  }
+
+  async saveSession(sessionId: string): Promise<void> {
+    if (!this.db) return;
+    const msgs = this.sessions.get(sessionId);
+    if (!msgs) return;
+    await this.db.saveSession(sessionId, msgs);
   }
 
   async *run(userMessage: string, sessionId: string): AsyncGenerator<StreamEvent> {
@@ -160,10 +198,15 @@ export class ConversationEngine {
         role: "assistant",
         content: fullContent,
       };
+      if (fullReasoning) {
+        chatMsg.reasoning_content = fullReasoning;
+      }
 
       // If there were tool calls, execute them
       if (toolCallAccum.size > 0) {
         const toolCalls: ToolCall[] = [];
+        const toolResults: { id: string; content: string }[] = [];
+
         for (const [idx, entry] of toolCallAccum) {
           const parsedArgs: Record<string, unknown> = entry.argumentsStr
             ? JSON.parse(entry.argumentsStr)
@@ -186,15 +229,20 @@ export class ConversationEngine {
             result,
           };
 
-          messages.push({
-            role: "tool",
-            content: result,
-            tool_call_id: entry.id,
-          });
+          toolResults.push({ id: entry.id, content: result });
         }
 
+        // Assistant message with tool_calls must come BEFORE tool messages
         chatMsg.tool_calls = toolCalls;
         messages.push(chatMsg);
+
+        for (const tr of toolResults) {
+          messages.push({
+            role: "tool",
+            content: tr.content,
+            tool_call_id: tr.id,
+          });
+        }
 
         // Loop to feed results back to LLM
         continue;
@@ -241,6 +289,9 @@ Respond in the same language the user uses.`;
   private toOpenAIMessages(messages: ChatMessage[]): OpenAI.ChatCompletionMessageParam[] {
     return messages.map((m) => {
       const base: any = { role: m.role, content: m.content };
+      if (m.reasoning_content) {
+        base.reasoning_content = m.reasoning_content;
+      }
       if (m.tool_calls) {
         base.tool_calls = m.tool_calls.map((tc: ToolCall) => ({
           id: tc.id,

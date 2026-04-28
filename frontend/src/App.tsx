@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 // ── Types ──
 
@@ -45,6 +47,18 @@ function argPreview(args: Record<string, unknown>): string {
     }
   }
   return "";
+}
+
+// ── Components ──
+
+// ── Markdown Renderer ──
+
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <div className="markdown-body">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    </div>
+  );
 }
 
 // ── Components ──
@@ -182,6 +196,10 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [username, setUsername] = useState<string>(() => localStorage.getItem("username") || "");
+  const [loginInput, setLoginInput] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = useCallback(() => {
@@ -191,6 +209,88 @@ export default function App() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
+
+  // Load conversation history after login
+  useEffect(() => {
+    if (!username) return;
+    fetch(`${API_BASE}/api/sessions/${encodeURIComponent(username)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        const history = convertHistory(data.messages || []);
+        setMessages(history);
+      })
+      .catch(() => {
+        // ignore
+      });
+  }, [username]);
+
+  const handleLogin = async () => {
+    const name = loginInput.trim();
+    if (!name) {
+      setLoginError("请输入用户名");
+      return;
+    }
+    setLoginLoading(true);
+    setLoginError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: name }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLoginError(data.error || "登录失败");
+        return;
+      }
+      localStorage.setItem("username", data.user.username);
+      setUsername(data.user.username);
+    } catch (err: any) {
+      setLoginError("网络错误，请重试");
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("username");
+    setUsername("");
+    setMessages([]);
+  };
+
+  // Convert backend ChatMessage[] to frontend Message[]
+  function convertHistory(serverMessages: any[]): Message[] {
+    const result: Message[] = [];
+    for (let i = 0; i < serverMessages.length; i++) {
+      const m = serverMessages[i];
+      if (m.role === "user") {
+        result.push({ role: "user", content: m.content });
+      } else if (m.role === "assistant") {
+        const toolCalls: ToolCallItem[] = (m.tool_calls || []).map((tc: any) => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments ? JSON.parse(tc.arguments) : {},
+          result: "",
+          running: false,
+        }));
+        // Merge subsequent tool messages into matching toolCalls
+        let j = i + 1;
+        while (j < serverMessages.length && serverMessages[j].role === "tool") {
+          const toolMsg = serverMessages[j];
+          const tc = toolCalls.find((t) => t.id === toolMsg.tool_call_id);
+          if (tc) tc.result = toolMsg.content;
+          j++;
+        }
+        result.push({
+          role: "assistant",
+          content: m.content,
+          reasoning: m.reasoning_content,
+          toolCalls,
+        });
+      }
+    }
+    return result;
+  }
 
   const send = async () => {
     const text = input.trim();
@@ -206,7 +306,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, username }),
       });
 
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
@@ -319,18 +419,97 @@ export default function App() {
     setSending(false);
   };
 
+  // 未登录 — 显示登录页
+  if (!username) {
+    return (
+      <div style={styles.loginContainer}>
+        <style>{`
+          @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
+        <div style={styles.loginCard}>
+          <div style={styles.loginIcon}>MCP</div>
+          <h2 style={styles.loginTitle}>欢迎</h2>
+          <p style={styles.loginSubtitle}>输入用户名即可开始使用</p>
+          <input
+            style={styles.loginInput}
+            value={loginInput}
+            onChange={(e) => setLoginInput(e.target.value)}
+            placeholder="用户名"
+            disabled={loginLoading}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleLogin();
+              }
+            }}
+          />
+          {loginError && <div style={styles.loginError}>{loginError}</div>}
+          <button
+            style={{
+              ...styles.loginButton,
+              opacity: loginLoading || !loginInput.trim() ? 0.6 : 1,
+            }}
+            onClick={handleLogin}
+            disabled={loginLoading || !loginInput.trim()}
+          >
+            {loginLoading ? (
+              <span style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
+                <Spinner /> 登录中...
+              </span>
+            ) : (
+              "进入"
+            )}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 已登录 — 显示聊天界面
   return (
     <div style={styles.container}>
-      {/* CSS keyframes for spinner */}
+      {/* CSS keyframes + Markdown styles */}
       <style>{`
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
+        .markdown-body { font-size: 14px; line-height: 1.6; color: #1a1a1a; }
+        .markdown-body h1 { font-size: 18px; font-weight: 700; margin: 12px 0 6px; }
+        .markdown-body h2 { font-size: 16px; font-weight: 600; margin: 10px 0 5px; }
+        .markdown-body h3 { font-size: 15px; font-weight: 600; margin: 8px 0 4px; }
+        .markdown-body h4, .markdown-body h5, .markdown-body h6 { font-size: 14px; font-weight: 600; margin: 6px 0 3px; }
+        .markdown-body p { margin: 0 0 8px; }
+        .markdown-body p:last-child { margin-bottom: 0; }
+        .markdown-body strong { font-weight: 600; }
+        .markdown-body em { font-style: italic; }
+        .markdown-body ul, .markdown-body ol { margin: 4px 0; padding-left: 20px; }
+        .markdown-body li { margin: 2px 0; }
+        .markdown-body li > p { margin: 0; }
+        .markdown-body a { color: #007bff; text-decoration: none; }
+        .markdown-body a:hover { text-decoration: underline; }
+        .markdown-body table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; }
+        .markdown-body th, .markdown-body td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+        .markdown-body th { background: #f8f8f8; font-weight: 600; }
+        .markdown-body tr:nth-child(even) { background: #fafafa; }
+        .markdown-body blockquote { margin: 8px 0; padding: 8px 12px; border-left: 3px solid #ddd; color: #666; background: #f9f9f9; border-radius: 0 4px 4px 0; }
+        .markdown-body hr { border: none; border-top: 1px solid #e5e5e5; margin: 12px 0; }
+        .markdown-body code { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12.5px; background: #f0f0f0; padding: 1px 4px; border-radius: 3px; }
+        .markdown-body pre { background: #f5f5f5; padding: 10px; border-radius: 6px; overflow: auto; max-height: 300px; margin: 8px 0; border: 1px solid #eee; }
+        .markdown-body pre code { background: none; padding: 0; }
       `}</style>
 
       <header style={styles.header}>
         <h1 style={styles.headerTitle}>MCP Conversation Engine</h1>
+        <div style={styles.userInfo}>
+          <span style={styles.username}>{username}</span>
+          <button style={styles.logoutBtn} onClick={handleLogout}>
+            退出
+          </button>
+        </div>
       </header>
 
       <div style={styles.messages}>
@@ -345,16 +524,20 @@ export default function App() {
             <div style={styles.avatar}>
               {msg.role === "user" ? "You" : "AI"}
             </div>
-            <div style={msg.role === "user" ? styles.userBubble : styles.assistantContent}>
-              {msg.role === "assistant" && msg.reasoning && <ReasoningBlock content={msg.reasoning} />}
-              {msg.content && <div style={styles.textBlock}>{msg.content}</div>}
-              {msg.toolCalls?.map((tc, j) => (
-                <ToolCallBlock key={tc.id || j} tc={tc} />
-              ))}
-              {msg.loading && !msg.content && !msg.toolCalls?.length && (
-                <span style={styles.typing}><Spinner /> thinking...</span>
-              )}
-            </div>
+            {msg.role === "user" ? (
+              <div style={styles.userBubble}>{msg.content}</div>
+            ) : (
+              <div style={styles.assistantBubble}>
+                {msg.reasoning && <ReasoningBlock content={msg.reasoning} />}
+                {msg.content && <MarkdownContent content={msg.content} />}
+                {msg.toolCalls?.map((tc, j) => (
+                  <ToolCallBlock key={tc.id || j} tc={tc} />
+                ))}
+                {msg.loading && !msg.content && !msg.toolCalls?.length && (
+                  <span style={styles.typing}><Spinner /> thinking...</span>
+                )}
+              </div>
+            )}
           </div>
         ))}
         <div ref={bottomRef} />
@@ -479,11 +662,16 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.5,
     wordBreak: "break-word",
   },
-  assistantContent: {
+  assistantBubble: {
     maxWidth: "80%",
     display: "flex",
     flexDirection: "column",
-    gap: 6,
+    gap: 8,
+    background: "#fff",
+    border: "1px solid #e5e5e5",
+    borderRadius: "12px",
+    padding: "14px 16px",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
   },
   textBlock: {
     fontSize: "14px",
@@ -637,5 +825,99 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     fontSize: "14px",
     transition: "opacity 0.15s",
+  },
+
+  // User info in header
+  userInfo: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    marginLeft: "auto",
+  },
+  username: {
+    fontSize: "13px",
+    color: "#555",
+    fontWeight: 500,
+  },
+  logoutBtn: {
+    padding: "4px 10px",
+    borderRadius: "6px",
+    border: "1px solid #d1d5db",
+    background: "#fff",
+    color: "#555",
+    cursor: "pointer",
+    fontSize: "12px",
+    fontWeight: 500,
+  },
+
+  // Login page
+  loginContainer: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    height: "100vh",
+    fontFamily: "'Inter', 'SF Pro Text', system-ui, -apple-system, sans-serif",
+    background: "#f7f7f8",
+    color: "#1a1a1a",
+  },
+  loginCard: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "16px",
+    background: "#fff",
+    padding: "40px 36px",
+    borderRadius: "16px",
+    boxShadow: "0 4px 24px rgba(0,0,0,0.06)",
+    width: "100%",
+    maxWidth: "360px",
+  },
+  loginIcon: {
+    fontSize: "28px",
+    fontWeight: 700,
+    color: "#007bff",
+    letterSpacing: "2px",
+  },
+  loginTitle: {
+    fontSize: "22px",
+    fontWeight: 600,
+    margin: 0,
+    color: "#1a1a1a",
+  },
+  loginSubtitle: {
+    fontSize: "14px",
+    color: "#888",
+    margin: 0,
+    marginTop: -8,
+  },
+  loginInput: {
+    width: "100%",
+    padding: "12px 14px",
+    borderRadius: "10px",
+    border: "1px solid #d1d5db",
+    fontSize: "15px",
+    outline: "none",
+    background: "#fff",
+    fontFamily: "inherit",
+    boxSizing: "border-box",
+    transition: "border-color 0.15s",
+  },
+  loginButton: {
+    width: "100%",
+    padding: "12px 20px",
+    borderRadius: "10px",
+    border: "none",
+    background: "#007bff",
+    color: "#fff",
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: "15px",
+    transition: "opacity 0.15s",
+  },
+  loginError: {
+    color: "#dc2626",
+    fontSize: "13px",
+    width: "100%",
+    textAlign: "center" as const,
   },
 };

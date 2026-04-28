@@ -40,7 +40,11 @@ export class McpManager {
 
   async connectAll(servers: Record<string, McpServerConfig>): Promise<void> {
     for (const [serverName, conf] of Object.entries(servers)) {
-      await this.connect(serverName, conf);
+      try {
+        await this.connect(serverName, conf);
+      } catch (err: any) {
+        console.error(`[MCP] Failed to connect to ${serverName}: ${err.message}`);
+      }
     }
   }
 

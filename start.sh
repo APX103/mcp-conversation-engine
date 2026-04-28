@@ -3,6 +3,7 @@ set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PID_FILE="$ROOT_DIR/.pids"
+LOG_DIR="$ROOT_DIR/logs"
 
 # Stop any existing instances
 if [ -f "$PID_FILE" ]; then
@@ -18,25 +19,31 @@ if [ ! -f "$ROOT_DIR/config.json" ]; then
   exit 1
 fi
 
+# Create logs directory
+mkdir -p "$LOG_DIR"
+
 echo "Starting MCP Conversation Engine..."
 
 # Start backend (port 3000) — run from project root so relative paths in config resolve correctly
 cd "$ROOT_DIR"
-npx tsx backend/src/index.ts &
+npx tsx backend/src/index.ts > "$LOG_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 echo "  Backend  (PID $BACKEND_PID) -> http://localhost:3000"
+echo "  Backend log -> $LOG_DIR/backend.log"
 
 # Start frontend (port 5173)
 cd "$ROOT_DIR/frontend"
-npx vite --host &
+npx vite --host > "$LOG_DIR/frontend.log" 2>&1 &
 FRONTEND_PID=$!
 echo "  Frontend (PID $FRONTEND_PID) -> http://localhost:5173"
+echo "  Frontend log -> $LOG_DIR/frontend.log"
 
 # Start example MCP server
 cd "$ROOT_DIR/example-mcp-server"
-node index.js &
+node index.js > "$LOG_DIR/mcp.log" 2>&1 &
 MCP_PID=$!
 echo "  MCP Server (PID $MCP_PID) -> calculator example"
+echo "  MCP log -> $LOG_DIR/mcp.log"
 
 # Save PIDs
 echo "$BACKEND_PID $FRONTEND_PID $MCP_PID" > "$PID_FILE"
@@ -44,3 +51,6 @@ echo "$BACKEND_PID $FRONTEND_PID $MCP_PID" > "$PID_FILE"
 echo ""
 echo "All services started. Open http://localhost:5173 to begin."
 echo "Run ./stop.sh to stop all services."
+echo ""
+echo "View backend logs in real-time:"
+echo "  tail -f $LOG_DIR/backend.log"

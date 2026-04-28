@@ -4,10 +4,10 @@
 
 ## 技术栈
 
-- **后端**: Node.js + Express + TypeScript, OpenAI SDK（兼容智谱 GLM）
+- **后端**: Node.js + Express + TypeScript, OpenAI SDK（兼容 DeepSeek / 智谱 GLM 等）
 - **前端**: React + Vite + TypeScript, 单页聊天 UI
 - **MCP**: @modelcontextprotocol/sdk, stdio transport
-- **搜索**: web-search-prime MCP Server（智谱）
+- **搜索**: web-search-prime MCP Server（智谱，或其他搜索 MCP Server）
 
 ## 快速开始
 
