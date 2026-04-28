@@ -3,6 +3,7 @@ import type { Config, ChatMessage, StreamEvent, ToolDef, ToolCall } from "./type
 import { createBuiltinTools } from "./tools.js";
 import { McpManager } from "./mcp.js";
 import type { DbManager } from "./db.js";
+import { buildApiMessages } from "./context.js";
 
 const MAX_TOOL_ROUNDS = 10;
 
@@ -138,22 +139,18 @@ export class ConversationEngine {
       const tools = this.getTools();
       const openaiTools = tools.map(toolDefToOpenAI);
 
-      const apiMessages: OpenAI.ChatCompletionMessageParam[] = [
-        { role: "system", content: systemPrompt },
-        ...this.toOpenAIMessages(messages),
-      ];
+      const apiMessages = await buildApiMessages(systemPrompt, messages, {
+        summarize: (texts) => this.summarizeMessages(texts),
+      });
 
-      const req: any = {
+      const stream = await (this.openai.chat.completions.create as any)({
         model: this.model,
         messages: apiMessages,
         tools: openaiTools.length > 0 ? openaiTools : undefined,
         stream: true,
-      };
-      if (this.thinking) {
-        req.reasoning_effort = this.reasoningEffort;
-        req.extra_body = { thinking: { type: "enabled" } };
-      }
-      const stream = await this.openai.chat.completions.create(req);
+        reasoning_effort: this.thinking ? this.reasoningEffort : undefined,
+        extra_body: this.thinking ? { thinking: { type: "enabled" } } : undefined,
+      });
 
       // Accumulators for streamed content
       let fullContent = "";
@@ -307,23 +304,14 @@ When you need to use a tool, use the appropriate function call. For MCP tools, u
 Respond in the same language the user uses.`;
   }
 
-  private toOpenAIMessages(messages: ChatMessage[]): OpenAI.ChatCompletionMessageParam[] {
-    return messages.map((m) => {
-      const base: any = { role: m.role, content: m.content };
-      if (m.reasoning_content) {
-        base.reasoning_content = m.reasoning_content;
-      }
-      if (m.tool_calls) {
-        base.tool_calls = m.tool_calls.map((tc: ToolCall) => ({
-          id: tc.id,
-          type: "function" as const,
-          function: { name: tc.name, arguments: tc.arguments },
-        }));
-      }
-      if (m.tool_call_id) {
-        base.tool_call_id = m.tool_call_id;
-      }
-      return base;
+  private async summarizeMessages(texts: string[]): Promise<string> {
+    const prompt = `请用一句话总结以下对话片段的核心内容（50字以内）：\n\n${texts.join("\n")}`;
+    const res = await this.openai.chat.completions.create({
+      model: this.model,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 100,
+      temperature: 0.3,
     });
+    return res.choices[0]?.message?.content?.trim() || "对话摘要";
   }
 }

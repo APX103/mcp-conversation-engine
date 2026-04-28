@@ -11,6 +11,7 @@
     "@modelcontextprotocol/sdk": "^1.12.1",
     "cors": "^2.8.5",
     "express": "^4.21.0",
+    "gpt-tokenizer": "^3.4.0",
     "mongodb": "^6.15.0",
     "openai": "^4.85.0",
     "tavily": "^1.0.2"
