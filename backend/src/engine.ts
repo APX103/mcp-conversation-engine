@@ -41,6 +41,8 @@ export class ConversationEngine {
   private openai: OpenAI;
   private mcp: McpManager;
   private model: string;
+  private thinking: boolean;
+  private reasoningEffort?: "high" | "max";
   private sessions = new Map<string, ChatMessage[]>();
   private db?: DbManager;
 
@@ -50,6 +52,8 @@ export class ConversationEngine {
       apiKey: config.llm.apiKey,
     });
     this.model = config.llm.model;
+    this.thinking = config.llm.thinking ?? true;
+    this.reasoningEffort = config.llm.reasoningEffort ?? "high";
     this.mcp = mcp;
     this.db = db;
 
@@ -127,12 +131,17 @@ export class ConversationEngine {
         ...this.toOpenAIMessages(messages),
       ];
 
-      const stream = await this.openai.chat.completions.create({
+      const req: any = {
         model: this.model,
         messages: apiMessages,
         tools: openaiTools.length > 0 ? openaiTools : undefined,
         stream: true,
-      });
+      };
+      if (this.thinking) {
+        req.reasoning_effort = this.reasoningEffort;
+        req.extra_body = { thinking: { type: "enabled" } };
+      }
+      const stream = await this.openai.chat.completions.create(req);
 
       // Accumulators for streamed content
       let fullContent = "";

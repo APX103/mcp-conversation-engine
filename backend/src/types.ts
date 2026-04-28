@@ -60,6 +60,8 @@ export interface Config {
     baseUrl: string;
     apiKey: string;
     model: string;
+    thinking?: boolean;
+    reasoningEffort?: "high" | "max";
   };
   mongodb?: {
     uri: string;

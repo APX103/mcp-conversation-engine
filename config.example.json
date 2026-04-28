@@ -2,7 +2,9 @@
   "llm": {
     "baseUrl": "https://api.deepseek.com",
     "apiKey": "YOUR_DEEPSEEK_API_KEY",
-    "model": "deepseek-v4-pro"
+    "model": "deepseek-v4-pro",
+    "thinking": true,
+    "reasoningEffort": "high"
   },
   "mongodb": {
     "uri": "mongodb://localhost:27017",
