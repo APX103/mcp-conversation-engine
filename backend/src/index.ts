@@ -164,6 +164,12 @@ app.delete("/api/sessions/:id", async (req, res) => {
   }
 });
 
+// POST /api/stop/:id — stop a running session
+app.post("/api/stop/:id", (req, res) => {
+  engine.stopSession(req.params.id);
+  res.json({ success: true });
+});
+
 // GET /api/config/thinking — get current thinking config
 app.get("/api/config/thinking", (_req, res) => {
   res.json(engine.getThinkingConfig());

@@ -227,6 +227,7 @@ export default function App() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -332,6 +333,20 @@ export default function App() {
     } finally {
       setLoginLoading(false);
     }
+  };
+
+  const handleStop = async () => {
+    if (!abortControllerRef.current) return;
+    abortControllerRef.current.abort();
+    abortControllerRef.current = null;
+    try {
+      await fetch(`${API_BASE}/api/stop/${encodeURIComponent(currentSessionId)}`, {
+        method: "POST",
+      });
+    } catch {
+      // ignore
+    }
+    setSending(false);
   };
 
   const handleLogout = () => {
@@ -475,10 +490,12 @@ export default function App() {
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
 
     try {
+      abortControllerRef.current = new AbortController();
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, sessionId: currentSessionId }),
+        signal: abortControllerRef.current.signal,
       });
 
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
@@ -574,13 +591,23 @@ export default function App() {
         }
       }
     } catch (err: any) {
-      setMessages((prev) => {
-        const updated = [...prev];
-        const last = { ...updated[updated.length - 1] };
-        last.content = `Connection error: ${err.message}`;
-        updated[updated.length - 1] = last;
-        return updated;
-      });
+      if (err.name === "AbortError") {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = { ...updated[updated.length - 1] };
+          last.loading = false;
+          updated[updated.length - 1] = last;
+          return updated;
+        });
+      } else {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = { ...updated[updated.length - 1] };
+          last.content = `Connection error: ${err.message}`;
+          updated[updated.length - 1] = last;
+          return updated;
+        });
+      }
     }
 
     setMessages((prev) => {
@@ -862,9 +889,22 @@ export default function App() {
               }
             }}
           />
-          <button style={{ ...styles.button, opacity: sending || !input.trim() ? 0.5 : 1 }} type="submit" disabled={sending || !input.trim()}>
-            Send
-          </button>
+          {sending ? (
+            <button
+              style={{ ...styles.stopButton }}
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                handleStop();
+              }}
+            >
+              停止
+            </button>
+          ) : (
+            <button style={{ ...styles.button, opacity: !input.trim() ? 0.5 : 1 }} type="submit" disabled={!input.trim()}>
+              Send
+            </button>
+          )}
         </form>
       </div>
     </div>
@@ -1301,6 +1341,17 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "8px",
     border: "none",
     background: "#007bff",
+    color: "#fff",
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: "14px",
+    transition: "opacity 0.15s",
+  },
+  stopButton: {
+    padding: "10px 20px",
+    borderRadius: "8px",
+    border: "none",
+    background: "#dc2626",
     color: "#fff",
     cursor: "pointer",
     fontWeight: 600,

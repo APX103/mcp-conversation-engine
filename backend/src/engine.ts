@@ -45,6 +45,7 @@ export class ConversationEngine {
   private thinking: boolean;
   private reasoningEffort?: "high" | "max";
   private sessions = new Map<string, ChatMessage[]>();
+  private stopFlags = new Map<string, boolean>();
   private db?: DbManager;
 
   constructor(config: Config, mcp: McpManager, db?: DbManager) {
@@ -129,7 +130,20 @@ export class ConversationEngine {
     this.reasoningEffort = value;
   }
 
+  stopSession(sessionId: string) {
+    this.stopFlags.set(sessionId, true);
+  }
+
+  private shouldStop(sessionId: string): boolean {
+    return !!this.stopFlags.get(sessionId);
+  }
+
+  private clearStop(sessionId: string) {
+    this.stopFlags.delete(sessionId);
+  }
+
   async *run(userMessage: string, sessionId: string): AsyncGenerator<StreamEvent> {
+    this.clearStop(sessionId);
     const messages = this.getOrCreateSession(sessionId);
     messages.push({ role: "user", content: userMessage });
 
@@ -159,6 +173,10 @@ export class ConversationEngine {
       const toolCallAccum = new Map<number, { id: string; name: string; argumentsStr: string }>();
 
       for await (const chunk of stream) {
+        if (this.shouldStop(sessionId)) {
+          yield { type: "error", content: "已停止" };
+          return;
+        }
         const delta = chunk.choices[0]?.delta;
         if (!delta) continue;
 
@@ -238,6 +256,10 @@ export class ConversationEngine {
 
           yield { type: "tool_call_end", id: entry.id, arguments: parsedArgs };
 
+          if (this.shouldStop(sessionId)) {
+            yield { type: "error", content: "已停止" };
+            return;
+          }
           const result = await this.executeTool(entry.name, parsedArgs);
 
           yield {
