@@ -164,6 +164,22 @@ app.delete("/api/sessions/:id", async (req, res) => {
   }
 });
 
+// GET /api/config/thinking — get current thinking config
+app.get("/api/config/thinking", (_req, res) => {
+  res.json(engine.getThinkingConfig());
+});
+
+// POST /api/config/thinking — update thinking config
+app.post("/api/config/thinking", (req, res) => {
+  const { thinking, reasoningEffort } = req.body as {
+    thinking?: boolean;
+    reasoningEffort?: "high" | "max";
+  };
+  if (typeof thinking === "boolean") engine.setThinking(thinking);
+  if (reasoningEffort === "high" || reasoningEffort === "max") engine.setReasoningEffort(reasoningEffort);
+  res.json(engine.getThinkingConfig());
+});
+
 // Health check
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });

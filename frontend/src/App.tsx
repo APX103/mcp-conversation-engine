@@ -221,6 +221,8 @@ export default function App() {
   const [menuOpenSessionId, setMenuOpenSessionId] = useState<string>("");
   const [editingSessionId, setEditingSessionId] = useState<string>("");
   const [renameInput, setRenameInput] = useState("");
+  const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(true);
+  const [reasoningEffort, setReasoningEffort] = useState<"high" | "max">("high");
   const [loginInput, setLoginInput] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
@@ -234,10 +236,17 @@ export default function App() {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // Load sessions after login
+  // Load sessions and thinking config after login
   useEffect(() => {
     if (!username) return;
     loadSessions(username);
+    fetch(`${API_BASE}/api/config/thinking`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (typeof data.thinking === "boolean") setThinkingEnabled(data.thinking);
+        if (data.reasoningEffort) setReasoningEffort(data.reasoningEffort);
+      })
+      .catch(() => {});
   }, [username]);
 
   const loadSessions = async (userId: string) => {
@@ -334,7 +343,36 @@ export default function App() {
     setMenuOpenSessionId("");
     setEditingSessionId("");
     setRenameInput("");
+    setThinkingEnabled(true);
+    setReasoningEffort("high");
     setMessages([]);
+  };
+
+  const toggleThinking = async () => {
+    const next = !thinkingEnabled;
+    setThinkingEnabled(next);
+    try {
+      await fetch(`${API_BASE}/api/config/thinking`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thinking: next }),
+      });
+    } catch {
+      // ignore
+    }
+  };
+
+  const switchEffort = async (value: "high" | "max") => {
+    setReasoningEffort(value);
+    try {
+      await fetch(`${API_BASE}/api/config/thinking`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reasoningEffort: value }),
+      });
+    } catch {
+      // ignore
+    }
   };
 
   const handleRenameSession = async (sessionId: string, newTitle: string) => {
@@ -720,6 +758,49 @@ export default function App() {
             );
           })}
         </div>
+        <div style={styles.thinkingControls}>
+          <div style={styles.thinkingRow}>
+            <span style={styles.thinkingLabel}>Thinking</span>
+            <button
+              style={{
+                ...styles.thinkingToggle,
+                background: thinkingEnabled ? "#007bff" : "#ccc",
+              }}
+              onClick={toggleThinking}
+            >
+              <span
+                style={{
+                  ...styles.thinkingToggleKnob,
+                  transform: thinkingEnabled ? "translateX(14px)" : "translateX(0)",
+                }}
+              />
+            </button>
+          </div>
+          {thinkingEnabled && (
+            <div style={styles.effortRow}>
+              <button
+                style={{
+                  ...styles.effortBtn,
+                  background: reasoningEffort === "high" ? "#e6f0ff" : "transparent",
+                  color: reasoningEffort === "high" ? "#007bff" : "#666",
+                }}
+                onClick={() => switchEffort("high")}
+              >
+                high
+              </button>
+              <button
+                style={{
+                  ...styles.effortBtn,
+                  background: reasoningEffort === "max" ? "#e6f0ff" : "transparent",
+                  color: reasoningEffort === "max" ? "#007bff" : "#666",
+                }}
+                onClick={() => switchEffort("max")}
+              >
+                max
+              </button>
+            </div>
+          )}
+        </div>
         <div style={styles.sidebarFooter}>
           <span style={styles.username}>{username}</span>
           <button style={styles.logoutBtn} onClick={handleLogout}>
@@ -930,6 +1011,56 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: "4px",
+  },
+  thinkingControls: {
+    padding: "10px 16px",
+    borderTop: "1px solid #e5e5e5",
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  thinkingRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  thinkingLabel: {
+    fontSize: "13px",
+    fontWeight: 500,
+    color: "#333",
+  },
+  thinkingToggle: {
+    width: "34px",
+    height: "20px",
+    borderRadius: "10px",
+    border: "none",
+    cursor: "pointer",
+    position: "relative",
+    transition: "background 0.2s",
+    padding: 0,
+  },
+  thinkingToggleKnob: {
+    display: "block",
+    width: "16px",
+    height: "16px",
+    borderRadius: "50%",
+    background: "#fff",
+    transition: "transform 0.2s",
+    margin: "2px",
+  },
+  effortRow: {
+    display: "flex",
+    gap: "4px",
+  },
+  effortBtn: {
+    flex: 1,
+    padding: "4px 8px",
+    borderRadius: "4px",
+    border: "1px solid #e5e5e5",
+    cursor: "pointer",
+    fontSize: "12px",
+    fontWeight: 500,
+    transition: "all 0.15s",
   },
   sidebarFooter: {
     padding: "12px 16px",

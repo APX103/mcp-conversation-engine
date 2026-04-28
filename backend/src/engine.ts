@@ -116,6 +116,18 @@ export class ConversationEngine {
     await this.db.saveSession(sessionId, msgs);
   }
 
+  getThinkingConfig() {
+    return { thinking: this.thinking, reasoningEffort: this.reasoningEffort };
+  }
+
+  setThinking(enabled: boolean) {
+    this.thinking = enabled;
+  }
+
+  setReasoningEffort(value: "high" | "max") {
+    this.reasoningEffort = value;
+  }
+
   async *run(userMessage: string, sessionId: string): AsyncGenerator<StreamEvent> {
     const messages = this.getOrCreateSession(sessionId);
     messages.push({ role: "user", content: userMessage });
