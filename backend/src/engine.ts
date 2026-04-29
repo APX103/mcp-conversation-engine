@@ -4,6 +4,7 @@ import { createBuiltinTools } from "./tools.js";
 import { McpManager } from "./mcp.js";
 import type { DbManager } from "./db.js";
 import { buildApiMessages } from "./context.js";
+import { MemoryEngine } from "./memory.js";
 
 const MAX_TOOL_ROUNDS = 10;
 
@@ -47,8 +48,9 @@ export class ConversationEngine {
   private sessions = new Map<string, ChatMessage[]>();
   private stopFlags = new Map<string, boolean>();
   private db?: DbManager;
+  private memory?: MemoryEngine;
 
-  constructor(config: Config, mcp: McpManager, db?: DbManager) {
+  constructor(config: Config, mcp: McpManager, db?: DbManager, memory?: MemoryEngine) {
     this.openai = new OpenAI({
       baseURL: config.llm.baseUrl,
       apiKey: config.llm.apiKey,
@@ -58,6 +60,7 @@ export class ConversationEngine {
     this.reasoningEffort = config.llm.reasoningEffort ?? "high";
     this.mcp = mcp;
     this.db = db;
+    this.memory = memory;
 
     // Monkey-patch allTools to close over current state
     (this as any)._allTools = () => {
@@ -151,12 +154,16 @@ export class ConversationEngine {
     this.stopFlags.delete(sessionId);
   }
 
-  async *run(userMessage: string, sessionId: string): AsyncGenerator<StreamEvent> {
+  async *run(
+    userMessage: string,
+    sessionId: string,
+    userId?: string
+  ): AsyncGenerator<StreamEvent> {
     this.clearStop(sessionId);
     const messages = this.getOrCreateSession(sessionId);
     messages.push({ role: "user", content: userMessage });
 
-    const systemPrompt = this.buildSystemPrompt();
+    const systemPrompt = await this.buildSystemPrompt(userId);
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const tools = this.getTools();
@@ -299,6 +306,7 @@ export class ConversationEngine {
 
       // No tool calls — we're done
       messages.push(chatMsg);
+      this.triggerLearn(sessionId, userId);
       yield { type: "done" };
       return;
     }
@@ -323,8 +331,17 @@ export class ConversationEngine {
     }
   }
 
-  private buildSystemPrompt(): string {
+  private async buildSystemPrompt(userId?: string): Promise<string> {
     const toolNames = this.getTools().map((t) => `- ${t.name}: ${t.description}`).join("\n");
+
+    let memorySection = "";
+    if (userId && this.memory) {
+      const memoryContext = await this.memory.getMemoryContext(userId);
+      if (memoryContext) {
+        memorySection = `\n\n【关于用户的跨对话记忆】\n${memoryContext}\n请始终记住以上信息，并在回复中自然地体现。`;
+      }
+    }
+
     return `You are a helpful assistant with access to tools. You can search the web and use MCP tools.
 
 Available tools:
@@ -332,7 +349,20 @@ ${toolNames}
 
 When you need to use a tool, use the appropriate function call. For MCP tools, use tool_search first to get the full parameter schema if you don't know it yet.
 
-Respond in the same language the user uses.`;
+Respond in the same language the user uses.${memorySection}`;
+  }
+
+  /**
+   * Trigger async knowledge extraction after a session ends.
+   * Non-blocking — errors are silently caught.
+   */
+  triggerLearn(sessionId: string, userId?: string): void {
+    if (!userId || !this.memory) return;
+    const messages = this.getOrCreateSession(sessionId);
+    // Fire-and-forget
+    this.memory.learn(userId, messages, sessionId).catch((err) => {
+      console.error("[Engine] triggerLearn failed:", err);
+    });
   }
 
   private async summarizeMessages(texts: string[]): Promise<string> {

@@ -5,6 +5,8 @@ import { McpManager } from "./mcp.js";
 import { ConversationEngine } from "./engine.js";
 import { findOrCreateUser } from "./users.js";
 import { DbManager } from "./db.js";
+import { MemoryEngine } from "./memory.js";
+import OpenAI from "openai";
 
 const config = loadConfig();
 const app = express();
@@ -108,6 +110,13 @@ app.post("/api/chat", async (req, res) => {
     return;
   }
 
+  // Resolve userId from session for memory injection & learning
+  let userId: string | undefined;
+  if (db) {
+    const sessionDoc = await db.getSession(sessionId).catch(() => null);
+    if (sessionDoc) userId = sessionDoc.userId;
+  }
+
   await engine.loadSession(sessionId);
 
   res.setHeader("Content-Type", "text/event-stream");
@@ -116,7 +125,7 @@ app.post("/api/chat", async (req, res) => {
   res.flushHeaders();
 
   try {
-    for await (const event of engine.run(message, sessionId)) {
+    for await (const event of engine.run(message, sessionId, userId)) {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     }
   } catch (err: any) {
@@ -193,6 +202,53 @@ app.post("/api/config/thinking", (req, res) => {
   res.json(engine.getThinkingConfig());
 });
 
+// ── Memory (Long-term Knowledge) ──
+
+// GET /api/memory/:userId — list knowledge for a user
+app.get("/api/memory/:userId", async (req, res) => {
+  const userId = req.params.userId;
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  try {
+    const knowledge = await db.getKnowledge(userId);
+    res.json({ knowledge });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/memory/:userId/:id — delete a single knowledge item
+app.delete("/api/memory/:userId/:id", async (req, res) => {
+  const id = req.params.id;
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  try {
+    await db.deleteKnowledge(id);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/memory/:userId — clear all knowledge for a user
+app.delete("/api/memory/:userId", async (req, res) => {
+  const userId = req.params.userId;
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  try {
+    await db.clearKnowledge(userId);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Health check
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
@@ -210,7 +266,17 @@ async function start() {
     await mcp.connectAll(config.mcpServers);
   }
 
-  engine = new ConversationEngine(config, mcp, db);
+  // Initialize memory engine if DB is available
+  let memory: MemoryEngine | undefined;
+  if (db) {
+    const openai = new OpenAI({
+      baseURL: config.llm.baseUrl,
+      apiKey: config.llm.apiKey,
+    });
+    memory = new MemoryEngine(openai, config.llm.model, db);
+  }
+
+  engine = new ConversationEngine(config, mcp, db, memory);
 
   app.listen(config.server.port, () => {
     console.log(`Server running at http://localhost:${config.server.port}`);

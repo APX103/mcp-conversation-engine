@@ -73,6 +73,20 @@ export interface Config {
   };
 }
 
+// ── Knowledge (Long-term Memory) ──
+
+export type KnowledgeType = "profile" | "fact" | "lesson";
+
+export interface KnowledgeItem {
+  id: string;
+  userId: string;
+  type: KnowledgeType;
+  content: string;
+  sourceSessionId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // ── Session ──
 
 export interface Session {

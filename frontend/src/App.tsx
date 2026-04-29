@@ -226,6 +226,9 @@ export default function App() {
   const [loginInput, setLoginInput] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [knowledge, setKnowledge] = useState<Array<{ _id: string; type: string; content: string }>>([]);
+  const [memoryLoading, setMemoryLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -369,6 +372,47 @@ export default function App() {
     setThinkingEnabled(true);
     setReasoningEffort("high");
     setMessages([]);
+    setMemoryOpen(false);
+    setKnowledge([]);
+  };
+
+  const loadMemory = async () => {
+    if (!username) return;
+    setMemoryLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/memory/${encodeURIComponent(username)}`);
+      const data = await res.json();
+      setKnowledge(data.knowledge || []);
+    } catch {
+      // ignore
+    } finally {
+      setMemoryLoading(false);
+    }
+  };
+
+  const deleteKnowledgeItem = async (id: string) => {
+    if (!username) return;
+    try {
+      await fetch(`${API_BASE}/api/memory/${encodeURIComponent(username)}/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      setKnowledge((prev) => prev.filter((k) => k._id !== id));
+    } catch {
+      // ignore
+    }
+  };
+
+  const clearAllMemory = async () => {
+    if (!username) return;
+    if (!window.confirm("确定清空所有记忆吗？此操作不可撤销。")) return;
+    try {
+      await fetch(`${API_BASE}/api/memory/${encodeURIComponent(username)}`, {
+        method: "DELETE",
+      });
+      setKnowledge([]);
+    } catch {
+      // ignore
+    }
   };
 
   const toggleThinking = async () => {
@@ -836,6 +880,21 @@ export default function App() {
             </div>
           )}
         </div>
+        <div style={styles.memorySection}>
+          <button
+            style={styles.memoryBtn}
+            onClick={() => {
+              setMemoryOpen(true);
+              loadMemory();
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
+              <path d="M12 2a10 10 0 0 1 10 10c0 5.523-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2z" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M12 16v-4M12 8h.01" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            我的记忆
+          </button>
+        </div>
         <div style={styles.sidebarFooter}>
           <span style={styles.username}>{username}</span>
           <button style={styles.logoutBtn} onClick={handleLogout}>
@@ -915,6 +974,54 @@ export default function App() {
           )}
         </form>
       </div>
+
+      {/* Memory Panel Modal */}
+      {memoryOpen && (
+        <div style={styles.memoryOverlay} onClick={() => setMemoryOpen(false)}>
+          <div style={styles.memoryModal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.memoryHeader}>
+              <h3 style={styles.memoryTitle}>我的记忆</h3>
+              <button style={styles.memoryCloseBtn} onClick={() => setMemoryOpen(false)}>
+                ✕
+              </button>
+            </div>
+            <div style={styles.memoryBody}>
+              {memoryLoading ? (
+                <div style={styles.memoryLoading}><Spinner /> 加载中...</div>
+              ) : knowledge.length === 0 ? (
+                <div style={styles.memoryEmpty}>暂无记忆。多聊几次，AI 会自动学习关于你的信息。</div>
+              ) : (
+                <div style={styles.memoryList}>
+                  {knowledge.map((k) => (
+                    <div key={k._id} style={styles.memoryItem}>
+                      <div style={styles.memoryItemHeader}>
+                        <span style={{ ...styles.memoryTypeBadge, ...styles[`memoryType_${k.type}`] }}>
+                          {k.type === "profile" ? "画像" : k.type === "fact" ? "事实" : "经验"}
+                        </span>
+                        <button
+                          style={styles.memoryDeleteBtn}
+                          onClick={() => deleteKnowledgeItem(k._id)}
+                          title="删除"
+                        >
+                          🗑
+                        </button>
+                      </div>
+                      <div style={styles.memoryContent}>{k.content}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {knowledge.length > 0 && (
+              <div style={styles.memoryFooter}>
+                <button style={styles.memoryClearBtn} onClick={clearAllMemory}>
+                  清空所有记忆
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1459,5 +1566,158 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "13px",
     width: "100%",
     textAlign: "center" as const,
+  },
+
+  // Memory
+  memorySection: {
+    padding: "8px 16px",
+    borderTop: "1px solid #e5e5e5",
+  },
+  memoryBtn: {
+    width: "100%",
+    padding: "8px 12px",
+    borderRadius: "6px",
+    border: "1px solid #e5e5e5",
+    background: "#fafafa",
+    color: "#555",
+    cursor: "pointer",
+    fontSize: "13px",
+    fontWeight: 500,
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    transition: "background 0.15s",
+  },
+  memoryOverlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "rgba(0,0,0,0.35)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 100,
+  },
+  memoryModal: {
+    background: "#fff",
+    borderRadius: "12px",
+    width: "100%",
+    maxWidth: "520px",
+    maxHeight: "80vh",
+    display: "flex",
+    flexDirection: "column",
+    boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
+  },
+  memoryHeader: {
+    padding: "16px 20px",
+    borderBottom: "1px solid #e5e5e5",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  memoryTitle: {
+    margin: 0,
+    fontSize: "16px",
+    fontWeight: 600,
+    color: "#1a1a1a",
+  },
+  memoryCloseBtn: {
+    padding: "4px 8px",
+    borderRadius: "6px",
+    border: "none",
+    background: "transparent",
+    color: "#888",
+    cursor: "pointer",
+    fontSize: "16px",
+    lineHeight: 1,
+  },
+  memoryBody: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "16px 20px",
+  },
+  memoryLoading: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    color: "#888",
+    fontSize: "14px",
+    padding: "40px 0",
+  },
+  memoryEmpty: {
+    textAlign: "center",
+    color: "#888",
+    fontSize: "14px",
+    padding: "40px 0",
+  },
+  memoryList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+  },
+  memoryItem: {
+    padding: "12px 14px",
+    borderRadius: "8px",
+    border: "1px solid #e5e5e5",
+    background: "#fafafa",
+  },
+  memoryItemHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: "6px",
+  },
+  memoryTypeBadge: {
+    fontSize: "11px",
+    fontWeight: 600,
+    padding: "2px 8px",
+    borderRadius: "4px",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.5px",
+  },
+  memoryType_profile: {
+    background: "#e6f0ff",
+    color: "#007bff",
+  },
+  memoryType_fact: {
+    background: "#e6f9ed",
+    color: "#16a34a",
+  },
+  memoryType_lesson: {
+    background: "#fff3e6",
+    color: "#d97706",
+  },
+  memoryContent: {
+    fontSize: "13px",
+    color: "#333",
+    lineHeight: 1.5,
+  },
+  memoryDeleteBtn: {
+    padding: "2px 6px",
+    borderRadius: "4px",
+    border: "none",
+    background: "transparent",
+    cursor: "pointer",
+    fontSize: "13px",
+    opacity: 0.6,
+  },
+  memoryFooter: {
+    padding: "12px 20px",
+    borderTop: "1px solid #e5e5e5",
+    display: "flex",
+    justifyContent: "flex-end",
+  },
+  memoryClearBtn: {
+    padding: "6px 12px",
+    borderRadius: "6px",
+    border: "1px solid #fecaca",
+    background: "#fef2f2",
+    color: "#dc2626",
+    cursor: "pointer",
+    fontSize: "12px",
+    fontWeight: 500,
   },
 };
