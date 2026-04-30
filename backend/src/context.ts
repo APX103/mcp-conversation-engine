@@ -139,12 +139,13 @@ export async function buildApiMessages(
   }
 
   // Append kept messages.
-  // DeepSeek requires reasoning_content to be echoed back for ALL assistant
-  // messages that originally contained it (not just tool_calls messages).
+  // DeepSeek requires reasoning_content field to be present on ALL assistant
+  // messages when thinking mode is active. Pass the original value, or an
+  // empty string as a fallback (e.g. for legacy messages or summaries).
   for (const m of kept) {
     const base: any = { role: m.role, content: m.content };
-    if (m.reasoning_content) {
-      base.reasoning_content = m.reasoning_content;
+    if (m.role === "assistant") {
+      base.reasoning_content = m.reasoning_content ?? "";
     }
     if (m.tool_calls) {
       base.tool_calls = m.tool_calls.map((tc) => ({

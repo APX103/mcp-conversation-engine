@@ -263,7 +263,9 @@ export class ConversationEngine {
         role: "assistant",
         content: fullContent,
       };
-      if (fullReasoning) {
+      // DeepSeek thinking mode: always include reasoning_content field
+      // (even if empty) so subsequent API calls don't throw 400.
+      if (this.thinking) {
         chatMsg.reasoning_content = fullReasoning;
       }
 
