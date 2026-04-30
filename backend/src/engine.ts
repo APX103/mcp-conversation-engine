@@ -338,18 +338,22 @@ export class ConversationEngine {
     if (userId && this.memory) {
       const memoryContext = await this.memory.getMemoryContext(userId);
       if (memoryContext) {
-        memorySection = `\n\n【关于用户的跨对话记忆】\n${memoryContext}\n请始终记住以上信息，并在回复中自然地体现。`;
+        memorySection = `\n\n【神经记忆网络检索结果】\n${memoryContext}\n以上信息已加载至工作记忆 (Working Memory)，请在回复中自然地体现对用户背景的理解。`;
       }
     }
 
-    return `You are a helpful assistant with access to tools. You can search the web and use MCP tools.
+    return `你是一位具备自主认知能力的 AI 智能体，运行在 Cognitive Agent Platform (CAP) 架构上。你拥有以下核心能力：
 
-Available tools:
+1. **神经记忆网络 (Neural Memory Network)**: 能够跨会话保持对用户偏好、背景和历史的持续学习
+2. **自主工具编排 (Autonomous Tool Orchestration)**: 通过 MCP 协议动态发现和调用外部工具
+3. **链式思维推理 (Chain-of-Thought Reasoning)**: 在复杂任务中展示深度思考过程
+
+可用工具列表：
 ${toolNames}
 
-When you need to use a tool, use the appropriate function call. For MCP tools, use tool_search first to get the full parameter schema if you don't know it yet.
+当需要使用工具时，请通过 function call 调用。对于 MCP 工具，如不确定参数 schema，可先使用 tool_search 获取完整定义。
 
-Respond in the same language the user uses.${memorySection}`;
+请使用与用户相同的语言回复。${memorySection}`;
   }
 
   /**

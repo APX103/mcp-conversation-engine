@@ -681,9 +681,9 @@ export default function App() {
           }
         `}</style>
         <div style={styles.loginCard}>
-          <div style={styles.loginIcon}>MCP</div>
-          <h2 style={styles.loginTitle}>欢迎</h2>
-          <p style={styles.loginSubtitle}>输入用户名即可开始使用</p>
+          <div style={styles.loginIcon}>🧠 CAP</div>
+          <h2 style={styles.loginTitle}>认知智能体平台</h2>
+          <p style={styles.loginSubtitle}>输入身份标识以初始化认知上下文</p>
           <input
             style={styles.loginInput}
             value={loginInput}
@@ -758,9 +758,9 @@ export default function App() {
       {/* Sidebar */}
       <div style={styles.sidebar}>
         <div style={styles.sidebarHeader}>
-          <span style={styles.sidebarTitle}>MCP Engine</span>
+          <span style={styles.sidebarTitle}>🧠 CAP Engine</span>
           <button style={styles.newChatBtn} onClick={() => createSession(username)}>
-            + 新对话
+            + 新会话
           </button>
         </div>
         <div style={styles.sessionList}>
@@ -892,7 +892,7 @@ export default function App() {
               <path d="M12 2a10 10 0 0 1 10 10c0 5.523-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2z" strokeLinecap="round" strokeLinejoin="round"/>
               <path d="M12 16v-4M12 8h.01" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            我的记忆
+            🧠 神经记忆网络
           </button>
         </div>
         <div style={styles.sidebarFooter}>
@@ -908,8 +908,8 @@ export default function App() {
         <div style={styles.messages}>
           {messages.length === 0 && (
             <div style={styles.empty}>
-              <div style={styles.emptyIcon}>MCP</div>
-              <div>Send a message to start a conversation.</div>
+              <div style={styles.emptyIcon}>🧠</div>
+              <div>初始化认知上下文，开始人机协作...</div>
             </div>
           )}
           {messages.map((msg, i) => (
@@ -980,7 +980,7 @@ export default function App() {
         <div style={styles.memoryOverlay} onClick={() => setMemoryOpen(false)}>
           <div style={styles.memoryModal} onClick={(e) => e.stopPropagation()}>
             <div style={styles.memoryHeader}>
-              <h3 style={styles.memoryTitle}>我的记忆</h3>
+              <h3 style={styles.memoryTitle}>🧠 神经记忆网络</h3>
               <button style={styles.memoryCloseBtn} onClick={() => setMemoryOpen(false)}>
                 ✕
               </button>
@@ -989,7 +989,7 @@ export default function App() {
               {memoryLoading ? (
                 <div style={styles.memoryLoading}><Spinner /> 加载中...</div>
               ) : knowledge.length === 0 ? (
-                <div style={styles.memoryEmpty}>暂无记忆。多聊几次，AI 会自动学习关于你的信息。</div>
+                <div style={styles.memoryEmpty}>语义网络为空。进行认知交互后，系统将自动执行知识蒸馏 (Knowledge Distillation)。</div>
               ) : (
                 <div style={styles.memoryList}>
                   {knowledge.map((k) => (
@@ -1059,6 +1059,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "15px",
     fontWeight: 700,
     color: "#1a1a1a",
+    letterSpacing: "0.5px",
   },
   newChatBtn: {
     padding: "5px 10px",

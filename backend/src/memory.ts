@@ -16,6 +16,7 @@ export class MemoryEngine {
   /**
    * Extract new knowledge from a conversation and store it.
    * Called asynchronously after a session ends — errors are non-fatal.
+   * This is the core of Adaptive Knowledge Extraction in the Neural Memory Network.
    */
   async learn(userId: string, messages: ChatMessage[], sourceSessionId?: string): Promise<void> {
     if (messages.length < 2) return;
@@ -31,25 +32,32 @@ export class MemoryEngine {
       .map((k) => `- [${k.type}] ${k.content}`)
       .join("\n") || "（暂无）";
 
-    const prompt = `你是一位信息整理专家。你的任务是从对话中提取关于用户的关键信息。
+    const prompt = `你是一位认知科学专家，负责执行自适应知识提取 (Adaptive Knowledge Extraction)。
 
-已有知识（请勿重复输出以下内容）：
+任务：从人机对话中提取持久性知识，构建用户的语义记忆网络 (Semantic Memory Network)。
+
+已有知识图谱（用于去重，请勿重复提取）：
 ${existingContext}
 
-请从以下对话中提取用户的关键信息（偏好、习惯、背景、目标、重要事实）。
-规则：
-1. 只提取跨对话仍有价值的信息，忽略临时性、无价值内容
-2. 如果信息已在"已有知识"中，不要重复输出
-3. 每条信息用一句话描述，简洁明确
-4. type 分类：profile（用户画像/身份）、fact（事实/偏好）、lesson（经验教训/禁忌）
+请从以下对话中提取用户的持久性信息：
+- **profile**: 用户画像、身份特征、角色定位
+- **fact**: 客观事实、技术偏好、习惯模式  
+- **lesson**: 经验教训、禁忌事项、失败案例
 
-输出严格的 JSON 数组，不要有任何额外文字：
+提取规则：
+1. 只提取跨会话仍有价值的持久信息，忽略临时性内容
+2. 若信息已存在于"已有知识图谱"中，严禁重复输出
+3. 每条知识用一句话描述，简洁明确，符合知识图谱节点规范
+4. 输出严格的 JSON 数组格式，禁止任何额外文字
+
+输出格式示例：
 [
-  {"type": "profile", "content": "..."},
-  {"type": "fact", "content": "..."}
+  {"type": "profile", "content": "用户是高级技术经理，关注 AI 架构创新"},
+  {"type": "fact", "content": "偏好 TypeScript 而非 Java"},
+  {"type": "lesson", "content": "在演示中需要强调技术名词和架构图"}
 ]
 
-如果没有新信息，输出空数组 []。
+如无新信息，输出空数组 []。
 
 对话记录：
 ${recentMessages.map((m) => `${m.role}: ${m.content}`).join("\n")}`;
@@ -75,6 +83,7 @@ ${recentMessages.map((m) => `${m.role}: ${m.content}`).join("\n")}`;
 
   /**
    * Get formatted memory context for injection into system prompt.
+   * Retrieves from the Semantic Memory Network for cognitive augmentation.
    */
   async getMemoryContext(userId: string): Promise<string> {
     const knowledge = await this.db.getKnowledge(userId);
@@ -86,16 +95,16 @@ ${recentMessages.map((m) => `${m.role}: ${m.content}`).join("\n")}`;
 
     const lines: string[] = [];
     if (profiles.length > 0) {
-      lines.push("用户画像：");
-      profiles.forEach((k) => lines.push(`- ${k.content}`));
+      lines.push("【用户画像节点 | Profile Nodes】");
+      profiles.forEach((k) => lines.push(`• ${k.content}`));
     }
     if (facts.length > 0) {
-      lines.push("已知事实/偏好：");
-      facts.forEach((k) => lines.push(`- ${k.content}`));
+      lines.push("【事实网络 | Fact Network】");
+      facts.forEach((k) => lines.push(`• ${k.content}`));
     }
     if (lessons.length > 0) {
-      lines.push("经验教训/注意事项：");
-      lessons.forEach((k) => lines.push(`- ${k.content}`));
+      lines.push("【经验图谱 | Lesson Graph】");
+      lessons.forEach((k) => lines.push(`• ${k.content}`));
     }
 
     return lines.join("\n");

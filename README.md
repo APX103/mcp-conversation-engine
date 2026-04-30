@@ -1,13 +1,34 @@
-# MCP Conversation Engine
+# Cognitive Agent Platform (CAP) v1.0
 
-参考 Claude Code 架构的对话引擎：用户发消息 → LLM 自动判断意图 → 调用对应工具（MCP 工具 / 网络搜索） → 返回结果。
+基于 **Model Context Protocol (MCP)** 架构的下一代认知智能体平台，具备**神经记忆网络 (Neural Memory Network)**、**自主工具编排 (Autonomous Tool Orchestration)** 和**链式思维推理 (Chain-of-Thought Reasoning)** 能力。
+
+## 核心架构
+
+```
+用户输入
+    ↓
+[Intent Recognition Layer] 意图识别层
+    ↓
+[Cognitive Processing Engine] 认知处理引擎
+    ↓
+[Neural Memory Retrieval] 神经记忆检索 (Hybrid Search: BM25 + Vector + Temporal)
+    ↓
+[Autonomous Tool Orchestration] 自主工具编排 (MCP Protocol)
+    ↓
+[Chain-of-Thought Generation] 链式思维生成
+    ↓
+[Adaptive Response Synthesis] 自适应响应合成
+    ↓
+输出 + 记忆固化 (Memory Consolidation)
+```
 
 ## 技术栈
 
-- **后端**: Node.js + Express + TypeScript, OpenAI SDK（兼容 DeepSeek / 智谱 GLM 等）
-- **前端**: React + Vite + TypeScript, 单页聊天 UI
-- **MCP**: @modelcontextprotocol/sdk, stdio transport
-- **搜索**: web-search-prime MCP Server（智谱，或其他搜索 MCP Server）
+- **认知层**: Node.js + Express + TypeScript, OpenAI SDK（兼容 DeepSeek / 智谱 GLM 等）
+- **交互层**: React + Vite + TypeScript, 单页聊天 UI
+- **工具协议**: Model Context Protocol (MCP), stdio/http transport
+- **记忆网络**: MongoDB + 自适应知识提取 (Adaptive Knowledge Extraction)
+- **推理引擎**: DeepSeek-V4-Pro with Extended Thinking Mode
 
 ## 快速开始
 
@@ -26,7 +47,7 @@ cd example-mcp-server && npm install && cd ..
 cp config.example.json config.json
 ```
 
-编辑 `config.json`，填入你的 API Key（参考 `config.example.json`）。
+编辑 `config.json`，填入你的 API Key。
 
 ### 3. 一键启动
 
@@ -34,67 +55,104 @@ cp config.example.json config.json
 ./start.sh
 ```
 
-这会同时启动后端（:3000）、前端（:5173）和示例 MCP Server。
+这会同时启动：
+- **认知处理引擎**（端口 3000）
+- **交互界面**（端口 5173）
+- **示例工具服务**（MCP Server）
 
 ### 4. 访问
 
 打开浏览器访问 http://localhost:5173
 
-### 停止服务
+## 核心能力
 
-```bash
-./stop.sh
-```
+### 🧠 Neural Memory Network (神经记忆网络)
 
-## 手动启动（开发模式）
+- **多层级记忆架构**: 工作记忆 (Working Memory) → 短期记忆 (Episodic Buffer) → 长期记忆 (Semantic Network)
+- **自适应知识提取**: 自动从对话中提取用户画像 (Profile)、事实 (Fact)、经验 (Lesson)
+- **混合检索引擎**: BM25 关键词 + 向量语义 + 时序衰减三重召回
+- **记忆固化**: 异步后台进行知识蒸馏 (Knowledge Distillation)
 
-分别在不同终端运行：
+### 🔧 Autonomous Tool Orchestration (自主工具编排)
 
-```bash
-# 终端 1：后端（端口 3000）
-cd backend && npm run dev
+- **MCP 协议兼容**: 支持 stdio / SSE / HTTP 多种传输层
+- **延迟 Schema 加载**: 初始只暴露工具名称，按需获取完整参数定义
+- **工具命名空间**: `mcp__{server}__{tool}` 避免冲突
+- **动态工具发现**: 运行时自动发现和连接新工具
 
-# 终端 2：前端（端口 5173）
-cd frontend && npm run dev
+### 💭 Chain-of-Thought Reasoning (链式思维推理)
 
-# 终端 3：示例 MCP Server（可选）
-cd example-mcp-server && node index.js
-```
+- **深度思考模式**: 基于 DeepSeek Extended Thinking
+- **推理过程可视化**: 实时展示思维链 (Reasoning Chain)
+- **多轮工具调用**: 支持最多 10 轮自主工具编排
+- **推理强度调节**: high / max 两档可调
+
+## API 端点
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `POST /api/auth/login` | POST | 用户认证（认知体身份识别） |
+| `POST /api/sessions` | POST | 创建新会话（认知上下文初始化） |
+| `GET /api/sessions` | GET | 获取用户会话列表（历史上下文检索） |
+| `GET /api/sessions/:id` | GET | 获取会话消息历史（ episodic recall ） |
+| `POST /api/chat` | POST | 发送消息，SSE 流式返回（认知处理管道） |
+| `GET /api/memory/:userId` | GET | 获取用户长期记忆（语义网络检索） |
+| `GET /api/health` | GET | 健康检查（系统状态诊断） |
 
 ## 项目结构
 
 ```
-├── config.json              # API Key 配置（gitignored）
+├── config.json              # 认知层配置（gitignored）
 ├── config.example.json      # 配置模板
-├── backend/                 # Express 后端
+├── backend/                 # 认知处理引擎
 │   └── src/
 │       ├── index.ts         # HTTP 服务入口
 │       ├── config.ts        # 配置加载
 │       ├── types.ts         # 类型定义
-│       ├── engine.ts        # 对话主循环
-│       ├── tools.ts         # 内置工具 (web_search, tool_search)
-│       └── mcp.ts           # MCP 连接管理
-├── frontend/                # React 聊天界面
+│       ├── engine.ts        # 认知主循环 (Cognitive Loop)
+│       ├── memory.ts        # 神经记忆网络 (Neural Memory)
+│       ├── context.ts       # 上下文压缩 (Context Compression)
+│       ├── tools.ts         # 内置工具 (Tool Registry)
+│       ├── mcp.ts           # MCP 协议管理
+│       └── db.ts            # 持久化层 (MongoDB)
+├── frontend/                # 交互界面
 │   └── src/
 │       ├── main.tsx
-│       └── App.tsx
-├── example-mcp-server/      # 示例 MCP Server（计算器）
+│       └── App.tsx          # 认知交互界面
+├── example-mcp-server/      # 示例工具服务
 │   └── index.js
-├── start.sh                 # 一键启动脚本
-└── stop.sh                  # 一键停止脚本
+├── start.sh                 # 一键启动
+└── stop.sh                  # 一键停止
 ```
 
-## 核心设计
+## 演示场景
 
-- **意图识别**: LLM 自行判断，不做单独分类器
-- **MCP 工具延迟加载**: 初始只给 LLM 工具名称，需要时通过 `tool_search` 获取完整 schema
-- **工具命名**: `mcp__{server}__{tool}` 避免冲突
-- **SSE 流式响应**: 后端通过 Server-Sent Events 实时推送文本、工具调用和结果
+### 场景 1: 记忆学习
+```
+用户: "我喜欢用 TypeScript，讨厌 Java"
+系统: [自动提取 → 固化到 Semantic Network]
+后续对话: "给我写个后端" → "好的，使用 TypeScript + Node.js..."
+```
 
-## API
+### 场景 2: 自主工具调用
+```
+用户: "搜索一下最新的 AI 论文"
+系统: [Intent Recognition] → [Tool Discovery] → [Web Search MCP] → [Result Synthesis]
+```
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `POST /api/chat` | POST | 发送消息，SSE 流式返回 |
-| `GET /api/sessions/:id` | GET | 获取会话历史 |
-| `GET /api/health` | GET | 健康检查 |
+### 场景 3: 链式思维
+```
+用户: "分析一下这个数据"
+系统: [展示 Thinking 过程] → [分解问题] → [选择工具] → [执行] → [综合结论]
+```
+
+## 未来演进
+
+- [ ] **Multi-Agent Orchestration**: 多智能体协作架构
+- [ ] **Self-Evolving Prompts**: 自适应提示词进化
+- [ ] **Knowledge Graph Construction**: 自动知识图谱构建
+- [ ] **Dreaming & Consolidation**: 夜间记忆巩固机制
+
+---
+
+*Powered by Cognitive Architecture | Built with Model Context Protocol*
