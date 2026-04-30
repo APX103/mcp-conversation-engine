@@ -9,12 +9,11 @@ export function countTokens(text: string): number {
   return encode(text).length;
 }
 
-/** Count tokens in a ChatMessage (content + reasoning + tool_calls + metadata overhead) */
+/** Count tokens in a ChatMessage (content + tool_calls + metadata overhead).
+ *  NOTE: reasoning_content is NOT counted because it must never be sent back to the LLM.
+ */
 export function countMessageTokens(msg: ChatMessage): number {
   let tokens = countTokens(msg.content);
-  if (msg.reasoning_content) {
-    tokens += countTokens(msg.reasoning_content);
-  }
   if (msg.tool_calls) {
     for (const tc of msg.tool_calls) {
       tokens += countTokens(tc.name);

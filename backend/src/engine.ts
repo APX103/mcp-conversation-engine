@@ -133,7 +133,14 @@ export class ConversationEngine {
     if (!this.db) return;
     const msgs = this.sessions.get(sessionId);
     if (!msgs) return;
-    await this.db.saveSession(sessionId, msgs);
+    // Strip reasoning_content before persistence — it's display-only and
+    // must never be fed back to the LLM or processed by memory.
+    const cleaned = msgs.map((m) => {
+      const copy = { ...m };
+      delete (copy as any).reasoning_content;
+      return copy;
+    });
+    await this.db.saveSession(sessionId, cleaned);
   }
 
   getThinkingConfig() {
@@ -388,8 +395,15 @@ ${toolNames}
   triggerMemoryHooks(sessionId: string, userId?: string): void {
     if (!userId || !this.memory) return;
     const messages = this.getOrCreateSession(sessionId);
+    // Strip reasoning_content before memory processing — it's display-only
+    // and must never leak into daily logs or consolidation prompts.
+    const cleaned = messages.map((m) => {
+      const copy = { ...m };
+      delete (copy as any).reasoning_content;
+      return copy;
+    });
     // Fire-and-forget
-    this.memory.afterConversation(userId, messages).catch((err) => {
+    this.memory.afterConversation(userId, cleaned).catch((err) => {
       console.error("[Engine] triggerMemoryHooks failed:", err);
     });
   }
