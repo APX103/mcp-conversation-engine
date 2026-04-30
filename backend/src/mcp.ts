@@ -36,7 +36,7 @@ function toolDefFromMcp(serverName: string, tool: {
 export class McpManager {
   private connections = new Map<string, McpConnection>();
   private toolDefs = new Map<string, ToolDef>();
-  private toolExecuteMap = new Map<string, (args: Record<string, unknown>) => Promise<string>>();
+  private toolExecuteMap = new Map<string, (args: Record<string, unknown>, userId?: string) => Promise<string>>();
 
   async connectAll(servers: Record<string, McpServerConfig>): Promise<void> {
     for (const [serverName, conf] of Object.entries(servers)) {
@@ -81,7 +81,7 @@ export class McpManager {
       const fullName = def.name;
 
       // Set up actual executor
-      this.toolExecuteMap.set(fullName, async (args) => {
+      this.toolExecuteMap.set(fullName, async (args, _userId?: string) => {
         try {
           const result = await client.callTool({ name: tool.name, arguments: args });
           if (result.isError) return `Error: ${JSON.stringify(result.content)}`;
@@ -113,10 +113,10 @@ export class McpManager {
   }
 
   /** Execute a tool by full name */
-  async executeTool(name: string, args: Record<string, unknown>): Promise<string> {
+  async executeTool(name: string, args: Record<string, unknown>, userId?: string): Promise<string> {
     const executor = this.toolExecuteMap.get(name);
     if (!executor) return `Error: Unknown tool "${name}"`;
-    return executor(args);
+    return executor(args, userId);
   }
 
   async disconnectAll(): Promise<void> {

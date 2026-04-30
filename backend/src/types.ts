@@ -12,7 +12,7 @@ export interface ToolDef {
   name: string;
   description: string;
   parameters: ToolParam[];
-  execute: (args: Record<string, unknown>) => Promise<string>;
+  execute: (args: Record<string, unknown>, userId?: string) => Promise<string>;
 }
 
 // ── Chat Messages ──

@@ -1,4 +1,6 @@
 import type { ToolDef } from "./types.js";
+import type { DbManager } from "./db.js";
+import { parseSkillMarkdown } from "./skill.js";
 import { readFile, writeFile, readdir, mkdir, stat } from "fs/promises";
 import { resolve, relative, dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -13,7 +15,6 @@ const WORKSPACE_ROOT = resolve(
 );
 
 function resolveWorkspacePath(inputPath: string): string {
-  // Reject absolute paths
   if (inputPath.startsWith("/") || inputPath.match(/^[a-zA-Z]:\\/)) {
     throw new Error("Absolute paths are not allowed. Use a relative path within the project.");
   }
@@ -36,7 +37,7 @@ function createToolSearch(getToolSchemas: (namePattern: string) => ToolDef[]): T
     parameters: [
       { name: "name", type: "string", description: "Partial or full tool name to search for", required: true },
     ],
-    async execute(args) {
+    async execute(args, _userId?) {
       const name = (args.name as string).toLowerCase();
       const matches = getToolSchemas(name);
       if (matches.length === 0) return `No tools found matching "${args.name}".`;
@@ -60,7 +61,7 @@ function createReadFile(): ToolDef {
       { name: "offset", type: "number", description: "1-based line number to start reading from", required: false },
       { name: "limit", type: "number", description: "Maximum number of lines to read", required: false },
     ],
-    async execute(args) {
+    async execute(args, _userId?) {
       const filePath = resolveWorkspacePath(args.path as string);
       let content = await readFile(filePath, "utf-8");
       const offset = typeof args.offset === "number" ? Math.max(1, args.offset) : 1;
@@ -91,7 +92,7 @@ function createListDirectory(): ToolDef {
       { name: "path", type: "string", description: "Relative path to the directory (e.g. 'backend/src')", required: true },
       { name: "recursive", type: "boolean", description: "List all files recursively", required: false },
     ],
-    async execute(args) {
+    async execute(args, _userId?) {
       const dirPath = resolveWorkspacePath(args.path as string);
       const recursive = args.recursive === true;
 
@@ -100,7 +101,7 @@ function createListDirectory(): ToolDef {
         const lines: string[] = [];
         for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
           const name = entry.name;
-          if (name.startsWith(".")) continue; // skip hidden
+          if (name.startsWith(".")) continue;
           const fullPath = join(dir, name);
           const relPath = prefix ? `${prefix}/${name}` : name;
           if (entry.isDirectory()) {
@@ -134,7 +135,7 @@ function createWriteFile(): ToolDef {
       { name: "content", type: "string", description: "Content to write", required: true },
       { name: "append", type: "boolean", description: "Append to existing file instead of overwriting", required: false },
     ],
-    async execute(args) {
+    async execute(args, _userId?) {
       const filePath = resolveWorkspacePath(args.path as string);
       const content = args.content as string;
       const append = args.append === true;
@@ -161,7 +162,7 @@ function createEditFile(): ToolDef {
       { name: "old_string", type: "string", description: "Exact string to replace", required: true },
       { name: "new_string", type: "string", description: "Replacement string", required: true },
     ],
-    async execute(args) {
+    async execute(args, _userId?) {
       const filePath = resolveWorkspacePath(args.path as string);
       const oldStr = args.old_string as string;
       const newStr = args.new_string as string;
@@ -194,10 +195,10 @@ function createFetchUrl(): ToolDef {
     parameters: [
       { name: "url", type: "string", description: "Target URL", required: true },
       { name: "method", type: "string", description: "HTTP method: GET, POST, PUT, DELETE (default GET)", required: false },
-      { name: "headers", type: "string", description: "JSON string of headers, e.g. '{\"Authorization\":\"Bearer xxx\"}'", required: false },
+      { name: "headers", type: "string", description: "JSON string of headers", required: false },
       { name: "body", type: "string", description: "Request body (for POST/PUT)", required: false },
     ],
-    async execute(args) {
+    async execute(args, _userId?) {
       const url = args.url as string;
       const method = (args.method as string)?.toUpperCase() || "GET";
       const body = args.body as string | undefined;
@@ -211,15 +212,103 @@ function createFetchUrl(): ToolDef {
         }
       }
 
-      const res = await fetch(url, {
-        method,
-        headers,
-        body: body || undefined,
-      });
-
+      const res = await fetch(url, { method, headers, body: body || undefined });
       const text = await res.text();
       const truncated = text.length > 8000 ? text.slice(0, 8000) + "\n... (truncated)" : text;
       return `Status: ${res.status} ${res.statusText}\n\n${truncated}`;
+    },
+  };
+}
+
+// ── Skill management ──
+
+function createSkillList(db: DbManager): ToolDef {
+  return {
+    name: "skill_list",
+    description: "List all installed skills for the current user.",
+    parameters: [],
+    async execute(_args, userId) {
+      if (!userId) return "Error: userId not available.";
+      const skills = await db.getSkills(userId);
+      if (skills.length === 0) return "No skills installed.";
+      return skills
+        .map((s) => `- ${s.name} (${s.builtin ? "builtin" : "custom"}, ${s.enabled ? "enabled" : "disabled"})\n  ${s.description}`)
+        .join("\n\n");
+    },
+  };
+}
+
+function createSkillCreate(db: DbManager): ToolDef {
+  return {
+    name: "skill_create",
+    description:
+      "Create a new skill from a SKILL.md markdown string with YAML frontmatter. " +
+      "The markdown must contain: name, description, triggers (array), and instruction content.",
+    parameters: [
+      { name: "markdown", type: "string", description: "Full SKILL.md with YAML frontmatter", required: true },
+    ],
+    async execute(args, userId) {
+      if (!userId) return "Error: userId not available.";
+      const parsed = parseSkillMarkdown(args.markdown as string);
+      if (!parsed) {
+        return "Error: Invalid SKILL.md format. Must have YAML frontmatter with name, description, triggers.";
+      }
+      await db.addSkill({
+        userId,
+        name: parsed.name,
+        description: parsed.description,
+        triggers: parsed.triggers,
+        content: parsed.content,
+        enabled: true,
+        builtin: false,
+      });
+      return `Created skill "${parsed.name}": ${parsed.description}`;
+    },
+  };
+}
+
+function createSkillUpdate(db: DbManager): ToolDef {
+  return {
+    name: "skill_update",
+    description: "Update an existing skill by name. Replaces the entire skill content with new markdown.",
+    parameters: [
+      { name: "name", type: "string", description: "Name of the skill to update", required: true },
+      { name: "markdown", type: "string", description: "New full SKILL.md with YAML frontmatter", required: true },
+    ],
+    async execute(args, userId) {
+      if (!userId) return "Error: userId not available.";
+      const skills = await db.getSkills(userId);
+      const skill = skills.find((s) => s.name === args.name);
+      if (!skill) return `Skill "${args.name}" not found.`;
+      if (skill.builtin) return `Cannot update builtin skill "${args.name}".`;
+      const parsed = parseSkillMarkdown(args.markdown as string);
+      if (!parsed) return "Error: Invalid SKILL.md format.";
+      await db.updateSkill(skill._id!, {
+        name: parsed.name,
+        description: parsed.description,
+        triggers: parsed.triggers,
+        content: parsed.content,
+      });
+      return `Updated skill "${parsed.name}".`;
+    },
+  };
+}
+
+function createSkillDelete(db: DbManager): ToolDef {
+  return {
+    name: "skill_delete",
+    description: "Delete a skill by name. Builtin skills cannot be deleted.",
+    parameters: [
+      { name: "name", type: "string", description: "Name of the skill to delete", required: true },
+    ],
+    async execute(args, userId) {
+      if (!userId) return "Error: userId not available.";
+      const skills = await db.getSkills(userId);
+      const skill = skills.find((s) => s.name === args.name);
+      if (!skill) return `Skill "${args.name}" not found.`;
+      if (skill.builtin) return `Cannot delete builtin skill "${args.name}".`;
+      await db.deleteSkill(skill._id!);
+      return `Deleted skill "${args.name}".`;
     },
   };
 }
@@ -228,11 +317,12 @@ function createFetchUrl(): ToolDef {
 
 export function createBuiltinTools(opts: {
   getToolSchemas: (namePattern: string) => ToolDef[];
+  db?: DbManager;
   mode?: "blacklist" | "whitelist";
   disabled?: string[];
   enabled?: string[];
 }): ToolDef[] {
-  const all = [
+  const all: ToolDef[] = [
     createToolSearch(opts.getToolSchemas),
     createReadFile(),
     createListDirectory(),
@@ -240,6 +330,15 @@ export function createBuiltinTools(opts: {
     createEditFile(),
     createFetchUrl(),
   ];
+
+  if (opts.db) {
+    all.push(
+      createSkillList(opts.db),
+      createSkillCreate(opts.db),
+      createSkillUpdate(opts.db),
+      createSkillDelete(opts.db)
+    );
+  }
 
   const mode = opts.mode ?? "blacklist";
 

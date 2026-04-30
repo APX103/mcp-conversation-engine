@@ -70,6 +70,7 @@ export class ConversationEngine {
       return [
         ...createBuiltinTools({
           getToolSchemas: (pattern) => this.mcp.getFullTools(pattern),
+          db: this.db,
           mode: config.builtinTools?.mode,
           disabled: config.builtinTools?.disabled,
           enabled: config.builtinTools?.enabled,
@@ -295,7 +296,7 @@ export class ConversationEngine {
             yield { type: "error", content: "已停止" };
             return;
           }
-          const result = await this.executeTool(entry.name, parsedArgs);
+          const result = await this.executeTool(entry.name, parsedArgs, userId);
 
           yield {
             type: "tool_result",
@@ -333,18 +334,18 @@ export class ConversationEngine {
     yield { type: "error", content: "Max tool rounds reached" };
   }
 
-  private async executeTool(name: string, args: Record<string, unknown>): Promise<string> {
+  private async executeTool(name: string, args: Record<string, unknown>, userId?: string): Promise<string> {
     const tools = this.getTools();
     const tool = tools.find((t) => t.name === name);
     if (!tool) return `Unknown tool: ${name}`;
 
     // MCP tools go through the manager
     if (name.startsWith("mcp__")) {
-      return this.mcp.executeTool(name, args);
+      return this.mcp.executeTool(name, args, userId);
     }
 
     try {
-      return await tool.execute(args);
+      return await tool.execute(args, userId);
     } catch (err: any) {
       return `Error executing ${name}: ${err.message}`;
     }

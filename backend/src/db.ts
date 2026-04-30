@@ -394,6 +394,14 @@ export class DbManager {
       .updateOne({ _id: new ObjectId(id) }, { $set: { enabled } });
   }
 
+  async updateSkill(id: string, updates: Partial<Omit<SkillDoc, "_id" | "createdAt">>): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    await this.client
+      .db(this.dbName)
+      .collection("skills")
+      .updateOne({ _id: new ObjectId(id) }, { $set: { ...updates, updatedAt: new Date() } });
+  }
+
   async deleteSkill(id: string): Promise<void> {
     const { ObjectId } = await import("mongodb");
     await this.client

@@ -49,6 +49,15 @@
   },
   "builtinTools": {
     "mode": "whitelist",
-    "enabled": ["tool_search", "read_file", "list_directory", "fetch_url"]
+    "enabled": [
+      "tool_search",
+      "read_file",
+      "list_directory",
+      "fetch_url",
+      "skill_list",
+      "skill_create",
+      "skill_update",
+      "skill_delete"
+    ]
   }
 }

@@ -1,5 +1,31 @@
 import type { DbManager } from "./db.js";
 
+/** Parse a SKILL.md string into structured fields.
+ *  Expects YAML frontmatter between `---` fences.
+ */
+export function parseSkillMarkdown(markdown: string): {
+  name: string;
+  description: string;
+  triggers: string[];
+  content: string;
+} | null {
+  const match = markdown.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match) return null;
+
+  const frontmatter = match[1];
+  const content = match[2].trim();
+
+  const name = frontmatter.match(/name:\s*(.+)/)?.[1]?.trim();
+  const description = frontmatter.match(/description:\s*(.+)/)?.[1]?.trim();
+  const triggersRaw = frontmatter.match(/triggers:\s*\[(.*?)\]/)?.[1];
+  const triggers = triggersRaw
+    ? triggersRaw.split(",").map((s) => s.trim().replace(/^["']|["']$/g, ""))
+    : [];
+
+  if (!name || !description) return null;
+  return { name, description, triggers, content };
+}
+
 const BUILTIN_SKILLS: Array<{
   name: string;
   description: string;
