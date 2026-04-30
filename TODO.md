@@ -67,6 +67,10 @@
 
 ### MCP 工具编排
 - [ ] **运行时热插拔 MCP 服务器**：目前只在启动时 `connectAll`，运行时无法动态增删
+- [x] **文件系统工具**：`read_file`, `list_directory`（限制在工作目录内）
+- [x] **文件编辑工具**：`write_file`, `edit_file`（自动创建目录、精确替换、防越级）
+- [x] **网络请求工具**：`fetch_url`（GET/POST/PUT/DELETE + headers/body）
+- [x] **工具开关配置**：`config.json` 的 `builtinTools.disabled` 黑名单，默认全开，按需禁用
 - [ ] **SSE transport**：当前仅支持 stdio 和 HTTP，未支持 SSE
 
 ### Skill 系统增强

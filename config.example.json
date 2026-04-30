@@ -46,5 +46,9 @@
         "retentionDays": 30
       }
     }
+  },
+  "builtinTools": {
+    "mode": "whitelist",
+    "enabled": ["read_file", "list_directory", "fetch_url"]
   }
 }

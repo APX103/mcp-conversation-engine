@@ -80,6 +80,11 @@ export interface Config {
       cleanupOldCommitments?: { enabled?: boolean; cron?: string; retentionDays?: number };
     };
   };
+  builtinTools?: {
+    mode?: "blacklist" | "whitelist"; // default: blacklist
+    disabled?: string[]; // for blacklist mode: tool names to disable
+    enabled?: string[];  // for whitelist mode: only these tools are available
+  };
 }
 
 // ── User Memory (OpenClaw-style Markdown) ──

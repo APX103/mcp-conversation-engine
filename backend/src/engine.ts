@@ -70,6 +70,9 @@ export class ConversationEngine {
       return [
         ...createBuiltinTools({
           getToolSchemas: (pattern) => this.mcp.getFullTools(pattern),
+          mode: config.builtinTools?.mode,
+          disabled: config.builtinTools?.disabled,
+          enabled: config.builtinTools?.enabled,
         }),
         ...this.mcp.getAllTools(),
       ];
