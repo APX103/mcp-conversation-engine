@@ -138,13 +138,17 @@ export async function buildApiMessages(
     result.push({ role: "assistant", content: `[此前对话摘要] ${summary}` });
   }
 
-  // Append kept messages
+  // Append kept messages.
+  // DeepSeek requires reasoning_content to be echoed back ONLY for messages
+  // that contain tool_calls. For plain text messages, omit it to prevent
+  // previous thinking chains from polluting subsequent reasoning.
   for (const m of kept) {
     const base: any = { role: m.role, content: m.content };
-    if (m.reasoning_content) {
-      base.reasoning_content = m.reasoning_content;
-    }
     if (m.tool_calls) {
+      // DeepSeek API requirement: tool_calls messages must include reasoning_content
+      if (m.reasoning_content) {
+        base.reasoning_content = m.reasoning_content;
+      }
       base.tool_calls = m.tool_calls.map((tc) => ({
         id: tc.id,
         type: "function",

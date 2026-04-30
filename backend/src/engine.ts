@@ -134,14 +134,7 @@ export class ConversationEngine {
     if (!this.db) return;
     const msgs = this.sessions.get(sessionId);
     if (!msgs) return;
-    // Strip reasoning_content before persistence — it's display-only and
-    // must never be fed back to the LLM or processed by memory.
-    const cleaned = msgs.map((m) => {
-      const copy = { ...m };
-      delete (copy as any).reasoning_content;
-      return copy;
-    });
-    await this.db.saveSession(sessionId, cleaned);
+    await this.db.saveSession(sessionId, msgs);
   }
 
   getThinkingConfig() {
