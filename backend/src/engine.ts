@@ -5,6 +5,7 @@ import { McpManager } from "./mcp.js";
 import type { DbManager } from "./db.js";
 import { buildApiMessages, compressMessages } from "./context.js";
 import { MemoryEngine } from "./memory.js";
+import { SkillEngine } from "./skill.js";
 
 const MAX_TOOL_ROUNDS = 10;
 
@@ -49,8 +50,9 @@ export class ConversationEngine {
   private stopFlags = new Map<string, boolean>();
   private db?: DbManager;
   private memory?: MemoryEngine;
+  private skill?: SkillEngine;
 
-  constructor(config: Config, mcp: McpManager, db?: DbManager, memory?: MemoryEngine) {
+  constructor(config: Config, mcp: McpManager, db?: DbManager, memory?: MemoryEngine, skill?: SkillEngine) {
     this.openai = new OpenAI({
       baseURL: config.llm.baseUrl,
       apiKey: config.llm.apiKey,
@@ -61,6 +63,7 @@ export class ConversationEngine {
     this.mcp = mcp;
     this.db = db;
     this.memory = memory;
+    this.skill = skill;
 
     // Monkey-patch allTools to close over current state
     (this as any)._allTools = () => {
@@ -351,6 +354,13 @@ export class ConversationEngine {
       const commitmentsContext = await this.memory.getCommitmentsContext(userId);
       if (commitmentsContext) {
         sections.push(commitmentsContext);
+      }
+    }
+
+    if (userId && this.skill) {
+      const skillsContext = await this.skill.getSkillsContext(userId);
+      if (skillsContext) {
+        sections.push(skillsContext);
       }
     }
 

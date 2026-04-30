@@ -13,6 +13,7 @@
     "express": "^4.21.0",
     "gpt-tokenizer": "^3.4.0",
     "mongodb": "^6.15.0",
+    "node-cron": "^4.2.1",
     "openai": "^4.85.0",
     "tavily": "^1.0.2"
   },
@@ -20,6 +21,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }

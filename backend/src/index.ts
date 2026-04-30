@@ -6,6 +6,8 @@ import { ConversationEngine } from "./engine.js";
 import { findOrCreateUser } from "./users.js";
 import { DbManager } from "./db.js";
 import { MemoryEngine } from "./memory.js";
+import { SkillEngine } from "./skill.js";
+import { Scheduler } from "./scheduler.js";
 import OpenAI from "openai";
 
 const config = loadConfig();
@@ -14,6 +16,8 @@ const mcp = new McpManager();
 let engine: ConversationEngine;
 let db: DbManager | undefined;
 let memory: MemoryEngine | undefined;
+let skillEngine: SkillEngine | undefined;
+let scheduler: Scheduler | undefined;
 
 app.use(cors());
 app.use(express.json());
@@ -37,6 +41,8 @@ app.get("/", (_req, res) => {
       { path: "GET /api/sessions/:id", desc: "获取会话消息历史" },
       { path: "POST /api/chat", desc: "发送消息，SSE 流式返回" },
       { path: "GET /api/health", desc: "健康检查" },
+    { path: "GET /api/scheduler", desc: "定时任务状态" },
+    { path: "POST /api/scheduler/:name/run", desc: "手动触发定时任务" },
     ],
   });
 });
@@ -322,9 +328,69 @@ app.delete("/api/commitments/:userId/:id", async (req, res) => {
   }
 });
 
+// ── Skills ──
+
+// GET /api/skills/:userId — list skills for a user
+app.get("/api/skills/:userId", async (req, res) => {
+  const userId = req.params.userId;
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  try {
+    const skills = await db.getSkills(userId, true);
+    res.json({ skills });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/skills/:userId/:id — toggle skill enabled
+app.put("/api/skills/:userId/:id", async (req, res) => {
+  const id = req.params.id;
+  const { enabled } = req.body as { enabled?: boolean };
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  if (typeof enabled !== "boolean") {
+    res.status(400).json({ error: "enabled is required" });
+    return;
+  }
+  try {
+    await db.updateSkillEnabled(id, enabled);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Health check
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
+});
+
+// ── Scheduler ──
+
+app.get("/api/scheduler", (_req, res) => {
+  if (!scheduler) {
+    res.status(500).json({ error: "Scheduler not initialized" });
+    return;
+  }
+  res.json({ tasks: scheduler.list() });
+});
+
+app.post("/api/scheduler/:name/run", async (req, res) => {
+  if (!scheduler) {
+    res.status(500).json({ error: "Scheduler not initialized" });
+    return;
+  }
+  try {
+    await scheduler.runNow(req.params.name);
+    res.json({ success: true, tasks: scheduler.list() });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 async function start() {
@@ -339,16 +405,76 @@ async function start() {
     await mcp.connectAll(config.mcpServers);
   }
 
-  // Initialize memory engine if DB is available
+  // Initialize memory & skill engines if DB is available
   if (db) {
     const openai = new OpenAI({
       baseURL: config.llm.baseUrl,
       apiKey: config.llm.apiKey,
     });
     memory = new MemoryEngine(openai, config.llm.model, db);
+    skillEngine = new SkillEngine(db);
+    await skillEngine.initBuiltinSkills();
+
+    // ── Scheduler ──
+    const schCfg = config.scheduler;
+    if (schCfg?.enabled !== false) {
+      scheduler = new Scheduler();
+      const tz = schCfg?.timezone;
+
+      // 1. Nightly memory consolidation for all users
+      const nc = schCfg?.tasks?.nightlyConsolidate;
+      if (nc?.enabled !== false && memory) {
+        scheduler.register(
+          "nightly-consolidate",
+          nc?.cron ?? "0 3 * * *",
+          async () => {
+            const userIds = await db!.getAllUserIds();
+            console.log(`[Scheduler] nightly-consolidate: ${userIds.length} users`);
+            for (const userId of userIds) {
+              try {
+                await memory!.consolidate(userId);
+              } catch (err: any) {
+                console.error(`[Scheduler] consolidate failed for ${userId}:`, err.message);
+              }
+            }
+          },
+          { timezone: tz }
+        );
+      }
+
+      // 2. Cleanup old daily logs
+      const cl = schCfg?.tasks?.cleanupOldLogs;
+      if (cl?.enabled !== false) {
+        const retention = cl?.retentionDays ?? 30;
+        scheduler.register(
+          "cleanup-old-logs",
+          cl?.cron ?? "0 4 * * *",
+          async () => {
+            const deleted = await db!.deleteOldDailyLogs(retention);
+            console.log(`[Scheduler] cleanup-old-logs: deleted ${deleted} logs older than ${retention} days`);
+          },
+          { timezone: tz }
+        );
+      }
+
+      // 3. Cleanup fulfilled old commitments
+      const cc = schCfg?.tasks?.cleanupOldCommitments;
+      if (cc?.enabled !== false) {
+        const retention = cc?.retentionDays ?? 30;
+        scheduler.register(
+          "cleanup-old-commitments",
+          cc?.cron ?? "30 4 * * *",
+          async () => {
+            const deleted = await db!.deleteOldCommitments(retention);
+            console.log(`[Scheduler] cleanup-old-commitments: deleted ${deleted} commitments older than ${retention} days`);
+          },
+          { timezone: tz }
+        );
+      }
+    }
   }
 
-  engine = new ConversationEngine(config, mcp, db, memory);
+  engine = new ConversationEngine(config, mcp, db, memory, skillEngine);
 
   app.listen(config.server.port, () => {
     console.log(`Server running at http://localhost:${config.server.port}`);

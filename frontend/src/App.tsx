@@ -235,6 +235,7 @@ export default function App() {
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memorySaving, setMemorySaving] = useState(false);
   const [memoryConsolidating, setMemoryConsolidating] = useState(false);
+  const [skills, setSkills] = useState<Array<{ _id: string; name: string; description: string; enabled: boolean; builtin: boolean }>>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -246,10 +247,11 @@ export default function App() {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // Load sessions and thinking config after login
+  // Load sessions, thinking config and skills after login
   useEffect(() => {
     if (!username) return;
     loadSessions(username);
+    loadSkills();
     fetch(`${API_BASE}/api/config/thinking`)
       .then((res) => res.json())
       .then((data) => {
@@ -383,6 +385,32 @@ export default function App() {
     setMemoryDraft("");
     setDailyLogs([]);
     setCommitments([]);
+    setSkills([]);
+  };
+
+  const loadSkills = async () => {
+    if (!username) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(username)}`);
+      const data = await res.json();
+      setSkills(data.skills || []);
+    } catch {
+      // ignore
+    }
+  };
+
+  const toggleSkill = async (id: string, enabled: boolean) => {
+    if (!username) return;
+    try {
+      await fetch(`${API_BASE}/api/skills/${encodeURIComponent(username)}/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !enabled }),
+      });
+      setSkills((prev) => prev.map((s) => (s._id === id ? { ...s, enabled: !enabled } : s)));
+    } catch {
+      // ignore
+    }
   };
 
   const loadMemory = async () => {
@@ -956,8 +984,37 @@ export default function App() {
               <path d="M12 2a10 10 0 0 1 10 10c0 5.523-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2z" strokeLinecap="round" strokeLinejoin="round"/>
               <path d="M12 16v-4M12 8h.01" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            🧠 神经记忆网络
+            我的记忆
           </button>
+        </div>
+        {/* Skills */}
+        <div style={styles.skillsSection}>
+          <div style={styles.skillsLabel}>技能</div>
+          {skills.length === 0 ? (
+            <div style={styles.skillsEmpty}>加载中...</div>
+          ) : (
+            <div style={styles.skillsList}>
+              {skills.map((s) => (
+                <div key={s._id} style={styles.skillRow}>
+                  <span style={styles.skillName}>{s.name}</span>
+                  <button
+                    style={{
+                      ...styles.skillToggle,
+                      background: s.enabled ? "#007bff" : "#ccc",
+                    }}
+                    onClick={() => toggleSkill(s._id, s.enabled)}
+                  >
+                    <span
+                      style={{
+                        ...styles.skillToggleKnob,
+                        transform: s.enabled ? "translateX(14px)" : "translateX(0)",
+                      }}
+                    />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <div style={styles.sidebarFooter}>
           <span style={styles.username}>{username}</span>
@@ -1943,5 +2000,58 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#888",
     cursor: "pointer",
     fontSize: "13px",
+  },
+  skillsSection: {
+    padding: "10px 16px",
+    borderTop: "1px solid #e5e5e5",
+  },
+  skillsLabel: {
+    fontSize: "11px",
+    fontWeight: 600,
+    color: "#888",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.5px",
+    marginBottom: "8px",
+  },
+  skillsEmpty: {
+    fontSize: "12px",
+    color: "#bbb",
+    padding: "4px 0",
+  },
+  skillsList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+  },
+  skillRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+  },
+  skillName: {
+    fontSize: "12px",
+    color: "#555",
+    fontWeight: 500,
+  },
+  skillToggle: {
+    width: "34px",
+    height: "20px",
+    borderRadius: "10px",
+    border: "none",
+    cursor: "pointer",
+    position: "relative",
+    transition: "background 0.2s",
+    padding: 0,
+    flexShrink: 0,
+  },
+  skillToggleKnob: {
+    display: "block",
+    width: "16px",
+    height: "16px",
+    borderRadius: "50%",
+    background: "#fff",
+    transition: "transform 0.2s",
+    margin: "2px",
   },
 };

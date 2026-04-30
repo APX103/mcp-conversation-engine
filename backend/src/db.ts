@@ -33,6 +33,18 @@ export interface CommitmentDoc {
   createdAt: Date;
 }
 
+export interface SkillDoc {
+  _id?: string;
+  userId?: string;
+  name: string;
+  description: string;
+  triggers: string[];
+  content: string;
+  enabled: boolean;
+  builtin: boolean;
+  createdAt: Date;
+}
+
 export class DbManager {
   private client: MongoClient;
   private dbName: string;
@@ -225,6 +237,17 @@ export class DbManager {
     await this.client.db(this.dbName).collection("dailyLogs").deleteMany(filter);
   }
 
+  /** Delete old daily logs across all users. */
+  async deleteOldDailyLogs(olderThanDays: number): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - olderThanDays);
+    const result = await this.client
+      .db(this.dbName)
+      .collection("dailyLogs")
+      .deleteMany({ date: { $lt: cutoff.toISOString().split("T")[0] } });
+    return result.deletedCount ?? 0;
+  }
+
   // ── Commitments (Inferred short-term follow-ups) ──
 
   async addCommitments(userId: string, items: Omit<CommitmentDoc, "_id" | "userId" | "createdAt">[]): Promise<void> {
@@ -270,6 +293,29 @@ export class DbManager {
     await this.client.db(this.dbName).collection("commitments").deleteMany({ userId });
   }
 
+  /** Delete fulfilled commitments older than N days across all users. */
+  async deleteOldCommitments(olderThanDays: number): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - olderThanDays);
+    const result = await this.client
+      .db(this.dbName)
+      .collection("commitments")
+      .deleteMany({ fulfilled: true, createdAt: { $lt: cutoff } });
+    return result.deletedCount ?? 0;
+  }
+
+  /** Collect all userIds that appear in sessions, memories, or dailyLogs. */
+  async getAllUserIds(): Promise<string[]> {
+    const db = this.client.db(this.dbName);
+    const [fromSessions, fromMemories, fromLogs] = await Promise.all([
+      db.collection("sessions").distinct("userId"),
+      db.collection("memories").distinct("userId"),
+      db.collection("dailyLogs").distinct("userId"),
+    ]);
+    const set = new Set<string>([...fromSessions, ...fromMemories, ...fromLogs]);
+    return Array.from(set).filter((id): id is string => typeof id === "string");
+  }
+
   // ── Flush log (compaction drop record) ──
 
   async appendFlushLog(userId: string, droppedSummary: string): Promise<void> {
@@ -306,6 +352,76 @@ export class DbManager {
       dueAt: doc.dueAt as Date | undefined,
       sourceSessionId: doc.sourceSessionId as string | undefined,
       fulfilled: doc.fulfilled as boolean,
+      createdAt: doc.createdAt as Date,
+    };
+  }
+
+  // ── Skills ──
+
+  async getSkills(userId: string, includeBuiltin = true): Promise<SkillDoc[]> {
+    const filter: any = includeBuiltin ? { $or: [{ userId }, { builtin: true }] } : { userId };
+    const docs = await this.client
+      .db(this.dbName)
+      .collection("skills")
+      .find(filter)
+      .sort({ builtin: -1, createdAt: -1 })
+      .toArray();
+    return docs.map((d) => this.toSkillDoc(d));
+  }
+
+  async getEnabledSkills(userId: string): Promise<SkillDoc[]> {
+    const filter: any = { enabled: true, $or: [{ userId }, { builtin: true }] };
+    const docs = await this.client
+      .db(this.dbName)
+      .collection("skills")
+      .find(filter)
+      .toArray();
+    return docs.map((d) => this.toSkillDoc(d));
+  }
+
+  async addSkill(skill: Omit<SkillDoc, "_id" | "createdAt">): Promise<void> {
+    await this.client.db(this.dbName).collection("skills").insertOne({
+      ...skill,
+      createdAt: new Date(),
+    });
+  }
+
+  async updateSkillEnabled(id: string, enabled: boolean): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    await this.client
+      .db(this.dbName)
+      .collection("skills")
+      .updateOne({ _id: new ObjectId(id) }, { $set: { enabled } });
+  }
+
+  async deleteSkill(id: string): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    await this.client
+      .db(this.dbName)
+      .collection("skills")
+      .deleteOne({ _id: new ObjectId(id) });
+  }
+
+  async initBuiltinSkill(skill: Omit<SkillDoc, "_id" | "createdAt">): Promise<void> {
+    const existing = await this.client
+      .db(this.dbName)
+      .collection("skills")
+      .findOne({ name: skill.name, builtin: true });
+    if (!existing) {
+      await this.addSkill(skill);
+    }
+  }
+
+  private toSkillDoc(doc: WithId<Document>): SkillDoc {
+    return {
+      _id: (doc._id as any).toString(),
+      userId: doc.userId as string | undefined,
+      name: doc.name as string,
+      description: doc.description as string,
+      triggers: doc.triggers as string[],
+      content: doc.content as string,
+      enabled: doc.enabled as boolean,
+      builtin: doc.builtin as boolean,
       createdAt: doc.createdAt as Date,
     };
   }

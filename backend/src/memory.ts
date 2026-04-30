@@ -2,6 +2,17 @@ import OpenAI from "openai";
 import type { DbManager } from "./db.js";
 import type { ChatMessage } from "./types.js";
 
+/** Safely slice a string without cutting a UTF-16 surrogate pair in half. */
+function safeSlice(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  let sliced = text.slice(0, maxLen);
+  const lastCode = sliced.charCodeAt(sliced.length - 1);
+  if (lastCode >= 0xD800 && lastCode <= 0xDBFF) {
+    sliced = sliced.slice(0, -1);
+  }
+  return sliced;
+}
+
 export class MemoryEngine {
   private openai: OpenAI;
   private model: string;
@@ -28,7 +39,7 @@ export class MemoryEngine {
     const recentLogs = await this.db.getDailyLogs(userId, 2);
     if (recentLogs.length > 0) {
       const logsText = recentLogs
-        .map((log) => `--- ${log.date} ---\n${log.content.slice(0, 800)}`)
+        .map((log) => `--- ${log.date} ---\n${safeSlice(log.content, 800)}`)
         .join("\n\n");
       parts.push(`【近日日志 | Daily Logs】\n${logsText}`);
     }
@@ -76,7 +87,7 @@ export class MemoryEngine {
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => {
         const prefix = m.role === "user" ? "用户" : "AI";
-        const text = m.content.slice(0, 300);
+        const text = safeSlice(m.content, 300);
         return `${prefix}: ${text}`;
       });
 
@@ -106,7 +117,7 @@ export class MemoryEngine {
     // Only consolidate if there's meaningful new content
     const recentLogs = allLogs.slice(0, 7); // last 7 days
     const logsText = recentLogs
-      .map((log) => `## ${log.date}\n${log.content.slice(0, 600)}`)
+      .map((log) => `## ${log.date}\n${safeSlice(log.content, 600)}`)
       .join("\n\n");
 
     const prompt = `你是一位记忆整理专家。请阅读用户的每日日志，更新长期记忆 (MEMORY.md)。
@@ -218,7 +229,7 @@ ${logsText}
 如果没有，输出空数组 []。
 
 对话：
-${recent.map((m) => `${m.role}: ${m.content.slice(0, 400)}`).join("\n")}`;
+${recent.map((m) => `${m.role}: ${safeSlice(m.content, 400)}`).join("\n")}`;
 
     try {
       const res = await this.openai.chat.completions.create({

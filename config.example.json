@@ -26,5 +26,25 @@
   },
   "server": {
     "port": 3000
+  },
+  "scheduler": {
+    "enabled": true,
+    "timezone": "Asia/Shanghai",
+    "tasks": {
+      "nightlyConsolidate": {
+        "enabled": true,
+        "cron": "0 3 * * *"
+      },
+      "cleanupOldLogs": {
+        "enabled": true,
+        "cron": "0 4 * * *",
+        "retentionDays": 30
+      },
+      "cleanupOldCommitments": {
+        "enabled": true,
+        "cron": "30 4 * * *",
+        "retentionDays": 30
+      }
+    }
   }
 }

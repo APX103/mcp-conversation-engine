@@ -71,6 +71,15 @@ export interface Config {
   server: {
     port: number;
   };
+  scheduler?: {
+    enabled?: boolean;
+    timezone?: string;
+    tasks?: {
+      nightlyConsolidate?: { enabled?: boolean; cron?: string };
+      cleanupOldLogs?: { enabled?: boolean; cron?: string; retentionDays?: number };
+      cleanupOldCommitments?: { enabled?: boolean; cron?: string; retentionDays?: number };
+    };
+  };
 }
 
 // ── User Memory (OpenClaw-style Markdown) ──
@@ -79,6 +88,20 @@ export interface UserMemory {
   userId: string;
   markdown: string;
   updatedAt: number;
+}
+
+// ── Skills ──
+
+export interface SkillDoc {
+  _id?: string;
+  userId?: string; // undefined = builtin/global
+  name: string;
+  description: string;
+  triggers: string[];
+  content: string;
+  enabled: boolean;
+  builtin: boolean;
+  createdAt: Date;
 }
 
 // ── Session ──
