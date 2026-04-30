@@ -8,7 +8,8 @@ import { fileURLToPath } from "url";
 const WORKSPACE_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
-  ".."
+  "..",
+  "workspace"
 );
 
 function resolveWorkspacePath(inputPath: string): string {
