@@ -227,8 +227,14 @@ export default function App() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [memoryOpen, setMemoryOpen] = useState(false);
-  const [knowledge, setKnowledge] = useState<Array<{ _id: string; type: string; content: string }>>([]);
+  const [memoryTab, setMemoryTab] = useState<"longTerm" | "dailyLogs" | "commitments">("longTerm");
+  const [memoryMarkdown, setMemoryMarkdown] = useState("");
+  const [memoryDraft, setMemoryDraft] = useState("");
+  const [dailyLogs, setDailyLogs] = useState<Array<{ date: string; content: string }>>([]);
+  const [commitments, setCommitments] = useState<Array<{ _id: string; content: string; createdAt: number }>>([]);
   const [memoryLoading, setMemoryLoading] = useState(false);
+  const [memorySaving, setMemorySaving] = useState(false);
+  const [memoryConsolidating, setMemoryConsolidating] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -373,7 +379,10 @@ export default function App() {
     setReasoningEffort("high");
     setMessages([]);
     setMemoryOpen(false);
-    setKnowledge([]);
+    setMemoryMarkdown("");
+    setMemoryDraft("");
+    setDailyLogs([]);
+    setCommitments([]);
   };
 
   const loadMemory = async () => {
@@ -382,7 +391,13 @@ export default function App() {
     try {
       const res = await fetch(`${API_BASE}/api/memory/${encodeURIComponent(username)}`);
       const data = await res.json();
-      setKnowledge(data.knowledge || []);
+      setMemoryMarkdown(data.longTerm || "");
+      setMemoryDraft(data.longTerm || "");
+      setDailyLogs(data.dailyLogs || []);
+      // Load commitments separately
+      const commitRes = await fetch(`${API_BASE}/api/commitments/${encodeURIComponent(username)}`);
+      const commitData = await commitRes.json();
+      setCommitments(commitData.commitments || []);
     } catch {
       // ignore
     } finally {
@@ -390,26 +405,75 @@ export default function App() {
     }
   };
 
-  const deleteKnowledgeItem = async (id: string) => {
+  const saveMemory = async () => {
     if (!username) return;
+    setMemorySaving(true);
     try {
-      await fetch(`${API_BASE}/api/memory/${encodeURIComponent(username)}/${encodeURIComponent(id)}`, {
-        method: "DELETE",
+      await fetch(`${API_BASE}/api/memory/${encodeURIComponent(username)}/long-term`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ markdown: memoryDraft }),
       });
-      setKnowledge((prev) => prev.filter((k) => k._id !== id));
+      setMemoryMarkdown(memoryDraft);
     } catch {
       // ignore
+    } finally {
+      setMemorySaving(false);
+    }
+  };
+
+  const consolidateMemory = async () => {
+    if (!username) return;
+    setMemoryConsolidating(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/memory/${encodeURIComponent(username)}/consolidate`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      setMemoryMarkdown(data.longTerm || "");
+      setMemoryDraft(data.longTerm || "");
+    } catch {
+      // ignore
+    } finally {
+      setMemoryConsolidating(false);
     }
   };
 
   const clearAllMemory = async () => {
     if (!username) return;
-    if (!window.confirm("确定清空所有记忆吗？此操作不可撤销。")) return;
+    if (!window.confirm("确定清空所有记忆吗？长期记忆、日志和待办都会被删除。")) return;
     try {
       await fetch(`${API_BASE}/api/memory/${encodeURIComponent(username)}`, {
         method: "DELETE",
       });
-      setKnowledge([]);
+      setMemoryMarkdown("");
+      setMemoryDraft("");
+      setDailyLogs([]);
+      setCommitments([]);
+    } catch {
+      // ignore
+    }
+  };
+
+  const fulfillCommitment = async (id: string) => {
+    if (!username) return;
+    try {
+      await fetch(`${API_BASE}/api/commitments/${encodeURIComponent(username)}/${encodeURIComponent(id)}/fulfill`, {
+        method: "POST",
+      });
+      setCommitments((prev) => prev.filter((c) => c._id !== id));
+    } catch {
+      // ignore
+    }
+  };
+
+  const deleteCommitment = async (id: string) => {
+    if (!username) return;
+    try {
+      await fetch(`${API_BASE}/api/commitments/${encodeURIComponent(username)}/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      setCommitments((prev) => prev.filter((c) => c._id !== id));
     } catch {
       // ignore
     }
@@ -980,45 +1044,128 @@ export default function App() {
         <div style={styles.memoryOverlay} onClick={() => setMemoryOpen(false)}>
           <div style={styles.memoryModal} onClick={(e) => e.stopPropagation()}>
             <div style={styles.memoryHeader}>
-              <h3 style={styles.memoryTitle}>🧠 神经记忆网络</h3>
+              <h3 style={styles.memoryTitle}>我的记忆</h3>
               <button style={styles.memoryCloseBtn} onClick={() => setMemoryOpen(false)}>
                 ✕
+              </button>
+            </div>
+            {/* Tabs */}
+            <div style={styles.memoryTabs}>
+              <button
+                style={{
+                  ...styles.memoryTab,
+                  ...(memoryTab === "longTerm" ? styles.memoryTabActive : {}),
+                }}
+                onClick={() => setMemoryTab("longTerm")}
+              >
+                长期记忆
+              </button>
+              <button
+                style={{
+                  ...styles.memoryTab,
+                  ...(memoryTab === "dailyLogs" ? styles.memoryTabActive : {}),
+                }}
+                onClick={() => setMemoryTab("dailyLogs")}
+              >
+                每日日志
+              </button>
+              <button
+                style={{
+                  ...styles.memoryTab,
+                  ...(memoryTab === "commitments" ? styles.memoryTabActive : {}),
+                }}
+                onClick={() => setMemoryTab("commitments")}
+              >
+                待办 {commitments.length > 0 ? `(${commitments.length})` : ""}
               </button>
             </div>
             <div style={styles.memoryBody}>
               {memoryLoading ? (
                 <div style={styles.memoryLoading}><Spinner /> 加载中...</div>
-              ) : knowledge.length === 0 ? (
-                <div style={styles.memoryEmpty}>语义网络为空。进行认知交互后，系统将自动执行知识蒸馏 (Knowledge Distillation)。</div>
-              ) : (
-                <div style={styles.memoryList}>
-                  {knowledge.map((k) => (
-                    <div key={k._id} style={styles.memoryItem}>
-                      <div style={styles.memoryItemHeader}>
-                        <span style={{ ...styles.memoryTypeBadge, ...styles[`memoryType_${k.type}`] }}>
-                          {k.type === "profile" ? "画像" : k.type === "fact" ? "事实" : "经验"}
-                        </span>
-                        <button
-                          style={styles.memoryDeleteBtn}
-                          onClick={() => deleteKnowledgeItem(k._id)}
-                          title="删除"
-                        >
-                          🗑
-                        </button>
+              ) : memoryTab === "longTerm" ? (
+                <>
+                  <p style={styles.memoryHint}>
+                    AI 每次会话都会读取这里的信息。你可以直接编辑，也可以让 AI 从日志自动整理。
+                  </p>
+                  <textarea
+                    style={styles.memoryTextarea}
+                    value={memoryDraft}
+                    onChange={(e) => setMemoryDraft(e.target.value)}
+                    placeholder="# 用户偏好\n- 喜欢简洁的回答\n\n# 技术背景\n- ..."
+                  />
+                </>
+              ) : memoryTab === "dailyLogs" ? (
+                <div style={styles.dailyLogsList}>
+                  {dailyLogs.length === 0 ? (
+                    <div style={styles.memoryEmpty}>暂无日志。对话后会自动生成。</div>
+                  ) : (
+                    dailyLogs.map((log) => (
+                      <div key={log.date} style={styles.dailyLogItem}>
+                        <div style={styles.dailyLogDate}>{log.date}</div>
+                        <pre style={styles.dailyLogContent}>{log.content}</pre>
                       </div>
-                      <div style={styles.memoryContent}>{k.content}</div>
-                    </div>
-                  ))}
+                    ))
+                  )}
+                </div>
+              ) : (
+                <div style={styles.dailyLogsList}>
+                  {commitments.length === 0 ? (
+                    <div style={styles.memoryEmpty}>暂无待办。提到"记得提醒我"之类的事情会被自动记录。</div>
+                  ) : (
+                    commitments.map((c) => (
+                      <div key={c._id} style={styles.commitmentItem}>
+                        <div style={styles.commitmentContent}>{c.content}</div>
+                        <div style={styles.commitmentActions}>
+                          <button
+                            style={styles.commitmentDoneBtn}
+                            onClick={() => fulfillCommitment(c._id)}
+                            title="完成"
+                          >
+                            ✓
+                          </button>
+                          <button
+                            style={styles.commitmentDeleteBtn}
+                            onClick={() => deleteCommitment(c._id)}
+                            title="删除"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               )}
             </div>
-            {knowledge.length > 0 && (
-              <div style={styles.memoryFooter}>
-                <button style={styles.memoryClearBtn} onClick={clearAllMemory}>
-                  清空所有记忆
-                </button>
-              </div>
-            )}
+            <div style={styles.memoryFooter}>
+              <button style={styles.memoryClearBtn} onClick={clearAllMemory}>
+                清空
+              </button>
+              {memoryTab === "longTerm" && (
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    style={{
+                      ...styles.memoryConsolidateBtn,
+                      opacity: memoryConsolidating ? 0.6 : 1,
+                    }}
+                    onClick={consolidateMemory}
+                    disabled={memoryConsolidating}
+                  >
+                    {memoryConsolidating ? "整理中..." : "从日志整理"}
+                  </button>
+                  <button
+                    style={{
+                      ...styles.memorySaveBtn,
+                      opacity: memorySaving ? 0.6 : 1,
+                    }}
+                    onClick={saveMemory}
+                    disabled={memorySaving}
+                  >
+                    {memorySaving ? "保存中..." : "保存"}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1638,6 +1785,9 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     overflowY: "auto",
     padding: "16px 20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
   },
   memoryLoading: {
     display: "flex",
@@ -1648,68 +1798,32 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "14px",
     padding: "40px 0",
   },
-  memoryEmpty: {
-    textAlign: "center",
+  memoryHint: {
+    margin: 0,
+    fontSize: "12px",
     color: "#888",
-    fontSize: "14px",
-    padding: "40px 0",
-  },
-  memoryList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-  },
-  memoryItem: {
-    padding: "12px 14px",
-    borderRadius: "8px",
-    border: "1px solid #e5e5e5",
-    background: "#fafafa",
-  },
-  memoryItemHeader: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: "6px",
-  },
-  memoryTypeBadge: {
-    fontSize: "11px",
-    fontWeight: 600,
-    padding: "2px 8px",
-    borderRadius: "4px",
-    textTransform: "uppercase" as const,
-    letterSpacing: "0.5px",
-  },
-  memoryType_profile: {
-    background: "#e6f0ff",
-    color: "#007bff",
-  },
-  memoryType_fact: {
-    background: "#e6f9ed",
-    color: "#16a34a",
-  },
-  memoryType_lesson: {
-    background: "#fff3e6",
-    color: "#d97706",
-  },
-  memoryContent: {
-    fontSize: "13px",
-    color: "#333",
     lineHeight: 1.5,
   },
-  memoryDeleteBtn: {
-    padding: "2px 6px",
-    borderRadius: "4px",
-    border: "none",
-    background: "transparent",
-    cursor: "pointer",
+  memoryTextarea: {
+    width: "100%",
+    flex: 1,
+    padding: "12px",
+    borderRadius: "8px",
+    border: "1px solid #d1d5db",
     fontSize: "13px",
-    opacity: 0.6,
+    lineHeight: 1.6,
+    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
+    resize: "none" as const,
+    outline: "none",
+    boxSizing: "border-box",
   },
   memoryFooter: {
     padding: "12px 20px",
     borderTop: "1px solid #e5e5e5",
     display: "flex",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "10px",
   },
   memoryClearBtn: {
     padding: "6px 12px",
@@ -1720,5 +1834,114 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontSize: "12px",
     fontWeight: 500,
+  },
+  memorySaveBtn: {
+    padding: "6px 16px",
+    borderRadius: "6px",
+    border: "none",
+    background: "#007bff",
+    color: "#fff",
+    cursor: "pointer",
+    fontSize: "13px",
+    fontWeight: 600,
+  },
+  memoryConsolidateBtn: {
+    padding: "6px 12px",
+    borderRadius: "6px",
+    border: "1px solid #d1d5db",
+    background: "#f9fafb",
+    color: "#555",
+    cursor: "pointer",
+    fontSize: "13px",
+    fontWeight: 500,
+  },
+  memoryTabs: {
+    display: "flex",
+    borderBottom: "1px solid #e5e5e5",
+    padding: "0 20px",
+    gap: "4px",
+  },
+  memoryTab: {
+    padding: "10px 14px",
+    border: "none",
+    borderBottom: "2px solid transparent",
+    background: "transparent",
+    color: "#888",
+    cursor: "pointer",
+    fontSize: "13px",
+    fontWeight: 500,
+    marginBottom: "-1px",
+  },
+  memoryTabActive: {
+    color: "#007bff",
+    borderBottomColor: "#007bff",
+  },
+  dailyLogsList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+  dailyLogItem: {
+    padding: "12px",
+    borderRadius: "8px",
+    border: "1px solid #e5e5e5",
+    background: "#fafafa",
+  },
+  dailyLogDate: {
+    fontSize: "12px",
+    fontWeight: 600,
+    color: "#555",
+    marginBottom: "6px",
+  },
+  dailyLogContent: {
+    margin: 0,
+    fontSize: "12px",
+    lineHeight: 1.5,
+    color: "#666",
+    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    maxHeight: "200px",
+    overflow: "auto",
+  },
+  commitmentItem: {
+    padding: "12px",
+    borderRadius: "8px",
+    border: "1px solid #e5e5e5",
+    background: "#fafafa",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "10px",
+  },
+  commitmentContent: {
+    fontSize: "13px",
+    color: "#333",
+    lineHeight: 1.5,
+    flex: 1,
+  },
+  commitmentActions: {
+    display: "flex",
+    gap: "6px",
+    flexShrink: 0,
+  },
+  commitmentDoneBtn: {
+    padding: "4px 8px",
+    borderRadius: "4px",
+    border: "1px solid #16a34a",
+    background: "#f0fdf4",
+    color: "#16a34a",
+    cursor: "pointer",
+    fontSize: "13px",
+    fontWeight: 600,
+  },
+  commitmentDeleteBtn: {
+    padding: "4px 8px",
+    borderRadius: "4px",
+    border: "1px solid #d1d5db",
+    background: "#fff",
+    color: "#888",
+    cursor: "pointer",
+    fontSize: "13px",
   },
 };

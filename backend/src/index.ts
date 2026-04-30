@@ -13,6 +13,7 @@ const app = express();
 const mcp = new McpManager();
 let engine: ConversationEngine;
 let db: DbManager | undefined;
+let memory: MemoryEngine | undefined;
 
 app.use(cors());
 app.use(express.json());
@@ -202,9 +203,9 @@ app.post("/api/config/thinking", (req, res) => {
   res.json(engine.getThinkingConfig());
 });
 
-// ── Memory (Long-term Knowledge) ──
+// ── Memory (OpenClaw-style: MEMORY.md + daily logs) ──
 
-// GET /api/memory/:userId — list knowledge for a user
+// GET /api/memory/:userId — get long-term + recent daily logs
 app.get("/api/memory/:userId", async (req, res) => {
   const userId = req.params.userId;
   if (!db) {
@@ -212,29 +213,54 @@ app.get("/api/memory/:userId", async (req, res) => {
     return;
   }
   try {
-    const knowledge = await db.getKnowledge(userId);
-    res.json({ knowledge });
+    const longTerm = await db.getLongTermMemory(userId);
+    const dailyLogs = await db.getDailyLogs(userId, 7);
+    res.json({
+      longTerm: longTerm?.markdown ?? "",
+      dailyLogs: dailyLogs.map((d) => ({ date: d.date, content: d.content })),
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// DELETE /api/memory/:userId/:id — delete a single knowledge item
-app.delete("/api/memory/:userId/:id", async (req, res) => {
-  const id = req.params.id;
+// PUT /api/memory/:userId/long-term — update MEMORY.md
+app.put("/api/memory/:userId/long-term", async (req, res) => {
+  const userId = req.params.userId;
+  const { markdown } = req.body as { markdown?: string };
   if (!db) {
     res.status(500).json({ error: "MongoDB not configured" });
     return;
   }
+  if (typeof markdown !== "string") {
+    res.status(400).json({ error: "markdown is required" });
+    return;
+  }
   try {
-    await db.deleteKnowledge(id);
+    await db.updateLongTermMemory(userId, markdown);
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// DELETE /api/memory/:userId — clear all knowledge for a user
+// POST /api/memory/:userId/consolidate — manually trigger consolidation
+app.post("/api/memory/:userId/consolidate", async (req, res) => {
+  const userId = req.params.userId;
+  if (!memory) {
+    res.status(500).json({ error: "Memory engine not available" });
+    return;
+  }
+  try {
+    await memory.consolidate(userId);
+    const longTerm = await db!.getLongTermMemory(userId);
+    res.json({ success: true, longTerm: longTerm?.markdown ?? "" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/memory/:userId — clear all memory
 app.delete("/api/memory/:userId", async (req, res) => {
   const userId = req.params.userId;
   if (!db) {
@@ -242,7 +268,54 @@ app.delete("/api/memory/:userId", async (req, res) => {
     return;
   }
   try {
-    await db.clearKnowledge(userId);
+    await db.clearAllMemory(userId);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Commitments (Inferred short-term follow-ups) ──
+
+// GET /api/commitments/:userId — list pending commitments
+app.get("/api/commitments/:userId", async (req, res) => {
+  const userId = req.params.userId;
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  try {
+    const commitments = await db.getCommitments(userId, false);
+    res.json({ commitments });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/commitments/:userId/:id/fulfill — mark as done
+app.post("/api/commitments/:userId/:id/fulfill", async (req, res) => {
+  const id = req.params.id;
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  try {
+    await db.fulfillCommitment(id);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/commitments/:userId/:id — delete a commitment
+app.delete("/api/commitments/:userId/:id", async (req, res) => {
+  const id = req.params.id;
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  try {
+    await db.deleteCommitment(id);
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -267,7 +340,6 @@ async function start() {
   }
 
   // Initialize memory engine if DB is available
-  let memory: MemoryEngine | undefined;
   if (db) {
     const openai = new OpenAI({
       baseURL: config.llm.baseUrl,

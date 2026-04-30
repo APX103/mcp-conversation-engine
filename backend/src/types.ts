@@ -73,17 +73,11 @@ export interface Config {
   };
 }
 
-// ── Knowledge (Long-term Memory) ──
+// ── User Memory (OpenClaw-style Markdown) ──
 
-export type KnowledgeType = "profile" | "fact" | "lesson";
-
-export interface KnowledgeItem {
-  id: string;
+export interface UserMemory {
   userId: string;
-  type: KnowledgeType;
-  content: string;
-  sourceSessionId?: string;
-  createdAt: number;
+  markdown: string;
   updatedAt: number;
 }
 

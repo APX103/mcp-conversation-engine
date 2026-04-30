@@ -1,5 +1,5 @@
-import { MongoClient, ObjectId, type WithId, type Document } from "mongodb";
-import type { ChatMessage, KnowledgeItem, KnowledgeType } from "./types.js";
+import { MongoClient, type WithId, type Document } from "mongodb";
+import type { ChatMessage } from "./types.js";
 
 export interface SessionDoc {
   sessionId: string;
@@ -10,19 +10,27 @@ export interface SessionDoc {
   updatedAt: Date;
 }
 
-export interface KnowledgeDoc {
-  _id: string;
+export interface LongTermMemoryDoc {
   userId: string;
-  type: KnowledgeType;
-  content: string;
-  sourceSessionId?: string;
-  createdAt: Date;
+  markdown: string;
   updatedAt: Date;
 }
 
-// Helper to safely convert string id to ObjectId
-function toObjectId(id: string): ObjectId {
-  return new ObjectId(id);
+export interface DailyLogDoc {
+  userId: string;
+  date: string; // YYYY-MM-DD
+  content: string;
+  updatedAt: Date;
+}
+
+export interface CommitmentDoc {
+  _id?: string;
+  userId: string;
+  content: string;
+  dueAt?: Date;
+  sourceSessionId?: string;
+  fulfilled: boolean;
+  createdAt: Date;
 }
 
 export class DbManager {
@@ -38,6 +46,8 @@ export class DbManager {
     await this.client.connect();
     console.log(`MongoDB connected to ${this.dbName}`);
   }
+
+  // ── Sessions ──
 
   async createSession(userId: string, title = "New Chat"): Promise<string> {
     const sessionId = crypto.randomUUID();
@@ -104,86 +114,199 @@ export class DbManager {
       .deleteOne({ sessionId });
   }
 
-  // ── Knowledge (Long-term Memory) ──
+  // ── Long-term Memory (MEMORY.md) ──
 
-  async addKnowledge(
-    userId: string,
-    items: Omit<KnowledgeItem, "id" | "userId" | "createdAt" | "updatedAt">[]
-  ): Promise<void> {
+  async getLongTermMemory(userId: string): Promise<LongTermMemoryDoc | null> {
+    const doc = await this.client
+      .db(this.dbName)
+      .collection("memories")
+      .findOne({ userId });
+    if (!doc) return null;
+    return {
+      userId: doc.userId as string,
+      markdown: doc.markdown as string,
+      updatedAt: doc.updatedAt as Date,
+    };
+  }
+
+  async updateLongTermMemory(userId: string, markdown: string): Promise<void> {
+    await this.client
+      .db(this.dbName)
+      .collection("memories")
+      .updateOne(
+        { userId },
+        { $set: { markdown, updatedAt: new Date() } },
+        { upsert: true }
+      );
+  }
+
+  // ── Daily Logs (memory/YYYY-MM-DD.md) ──
+
+  async appendDailyLog(userId: string, date: string, entry: string): Promise<void> {
+    await this.client
+      .db(this.dbName)
+      .collection("dailyLogs")
+      .updateOne(
+        { userId, date },
+        {
+          $set: { userId, date, updatedAt: new Date() },
+          $inc: { entryCount: 1 },
+          $setOnInsert: { content: "" },
+        },
+        { upsert: true }
+      );
+    // Append entry to content
+    await this.client
+      .db(this.dbName)
+      .collection("dailyLogs")
+      .updateOne(
+        { userId, date },
+        { $set: { updatedAt: new Date() }, $inc: { entryCount: 1 } }
+      );
+    // Use $concat for content (not available in MongoDB, so we fetch and update)
+    const doc = await this.client
+      .db(this.dbName)
+      .collection("dailyLogs")
+      .findOne({ userId, date });
+    const currentContent = (doc?.content as string) ?? "";
+    await this.client
+      .db(this.dbName)
+      .collection("dailyLogs")
+      .updateOne(
+        { userId, date },
+        { $set: { content: currentContent + entry, updatedAt: new Date() } }
+      );
+  }
+
+  async getDailyLogs(userId: string, limitDays = 2): Promise<DailyLogDoc[]> {
+    const today = new Date();
+    const dates: string[] = [];
+    for (let i = 0; i < limitDays; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      dates.push(d.toISOString().split("T")[0]);
+    }
+    const docs = await this.client
+      .db(this.dbName)
+      .collection("dailyLogs")
+      .find({ userId, date: { $in: dates } })
+      .sort({ date: -1 })
+      .toArray();
+    return docs.map((d) => ({
+      userId: d.userId as string,
+      date: d.date as string,
+      content: d.content as string,
+      updatedAt: d.updatedAt as Date,
+    }));
+  }
+
+  async getAllDailyLogs(userId: string): Promise<DailyLogDoc[]> {
+    const docs = await this.client
+      .db(this.dbName)
+      .collection("dailyLogs")
+      .find({ userId })
+      .sort({ date: -1 })
+      .toArray();
+    return docs.map((d) => ({
+      userId: d.userId as string,
+      date: d.date as string,
+      content: d.content as string,
+      updatedAt: d.updatedAt as Date,
+    }));
+  }
+
+  async deleteDailyLogs(userId: string, olderThanDays?: number): Promise<void> {
+    const filter: any = { userId };
+    if (olderThanDays) {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - olderThanDays);
+      filter.date = { $lt: cutoff.toISOString().split("T")[0] };
+    }
+    await this.client.db(this.dbName).collection("dailyLogs").deleteMany(filter);
+  }
+
+  // ── Commitments (Inferred short-term follow-ups) ──
+
+  async addCommitments(userId: string, items: Omit<CommitmentDoc, "_id" | "userId" | "createdAt">[]): Promise<void> {
+    if (items.length === 0) return;
     const now = new Date();
     const docs = items.map((item) => ({
+      ...item,
       userId,
-      type: item.type,
-      content: item.content,
-      sourceSessionId: item.sourceSessionId,
       createdAt: now,
-      updatedAt: now,
     }));
-    if (docs.length > 0) {
-      await this.client.db(this.dbName).collection("knowledge").insertMany(docs as any);
-    }
+    await this.client.db(this.dbName).collection("commitments").insertMany(docs as any);
   }
 
-  async getKnowledge(
-    userId: string,
-    type?: KnowledgeType
-  ): Promise<KnowledgeDoc[]> {
+  async getCommitments(userId: string, includeFulfilled = false): Promise<CommitmentDoc[]> {
     const filter: any = { userId };
-    if (type) filter.type = type;
+    if (!includeFulfilled) filter.fulfilled = false;
     const docs = await this.client
       .db(this.dbName)
-      .collection("knowledge")
+      .collection("commitments")
       .find(filter)
-      .sort({ updatedAt: -1 })
-      .limit(50)
+      .sort({ createdAt: -1 })
       .toArray();
-    return docs.map((d) => this.toKnowledgeDoc(d));
+    return docs.map((d) => this.toCommitmentDoc(d));
   }
 
-  async deleteKnowledge(id: string): Promise<void> {
+  async fulfillCommitment(id: string): Promise<void> {
+    const { ObjectId } = await import("mongodb");
     await this.client
       .db(this.dbName)
-      .collection("knowledge")
-      .deleteOne({ _id: toObjectId(id) });
+      .collection("commitments")
+      .updateOne({ _id: new ObjectId(id) }, { $set: { fulfilled: true } });
   }
 
-  async clearKnowledge(userId: string): Promise<void> {
+  async deleteCommitment(id: string): Promise<void> {
+    const { ObjectId } = await import("mongodb");
     await this.client
       .db(this.dbName)
-      .collection("knowledge")
-      .deleteMany({ userId });
+      .collection("commitments")
+      .deleteOne({ _id: new ObjectId(id) });
   }
 
-  async findSimilarKnowledge(
-    userId: string,
-    content: string
-  ): Promise<KnowledgeDoc[]> {
-    // Simple keyword matching using text search or regex
-    const keywords = content
-      .replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, " ")
-      .split(/\s+/)
-      .filter((w) => w.length >= 2);
-    if (keywords.length === 0) return [];
+  async clearCommitments(userId: string): Promise<void> {
+    await this.client.db(this.dbName).collection("commitments").deleteMany({ userId });
+  }
 
-    const regex = new RegExp(keywords.join("|"), "i");
-    const docs = await this.client
+  // ── Flush log (compaction drop record) ──
+
+  async appendFlushLog(userId: string, droppedSummary: string): Promise<void> {
+    const today = new Date().toISOString().split("T")[0];
+    const entry = `\n[FLUSH] 上下文压缩时抢救:\n${droppedSummary}\n`;
+    const doc = await this.client
       .db(this.dbName)
-      .collection("knowledge")
-      .find({ userId, content: { $regex: regex } })
-      .limit(10)
-      .toArray();
-    return docs.map((d) => this.toKnowledgeDoc(d));
+      .collection("dailyLogs")
+      .findOne({ userId, date: today });
+    const currentContent = (doc?.content as string) ?? "";
+    await this.client
+      .db(this.dbName)
+      .collection("dailyLogs")
+      .updateOne(
+        { userId, date: today },
+        { $set: { content: currentContent + entry, updatedAt: new Date() }, $inc: { entryCount: 1 } },
+        { upsert: true }
+      );
   }
 
-  private toKnowledgeDoc(doc: WithId<Document>): KnowledgeDoc {
+  // ── Clear all memory ──
+
+  async clearAllMemory(userId: string): Promise<void> {
+    await this.client.db(this.dbName).collection("memories").deleteOne({ userId });
+    await this.client.db(this.dbName).collection("dailyLogs").deleteMany({ userId });
+    await this.client.db(this.dbName).collection("commitments").deleteMany({ userId });
+  }
+
+  private toCommitmentDoc(doc: WithId<Document>): CommitmentDoc {
     return {
-      _id: (doc._id as ObjectId).toString(),
+      _id: (doc._id as any).toString(),
       userId: doc.userId as string,
-      type: doc.type as KnowledgeType,
       content: doc.content as string,
+      dueAt: doc.dueAt as Date | undefined,
       sourceSessionId: doc.sourceSessionId as string | undefined,
+      fulfilled: doc.fulfilled as boolean,
       createdAt: doc.createdAt as Date,
-      updatedAt: doc.updatedAt as Date,
     };
   }
 

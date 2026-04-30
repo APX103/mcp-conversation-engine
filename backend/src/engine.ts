@@ -3,7 +3,7 @@ import type { Config, ChatMessage, StreamEvent, ToolDef, ToolCall } from "./type
 import { createBuiltinTools } from "./tools.js";
 import { McpManager } from "./mcp.js";
 import type { DbManager } from "./db.js";
-import { buildApiMessages } from "./context.js";
+import { buildApiMessages, compressMessages } from "./context.js";
 import { MemoryEngine } from "./memory.js";
 
 const MAX_TOOL_ROUNDS = 10;
@@ -165,6 +165,12 @@ export class ConversationEngine {
 
     const systemPrompt = await this.buildSystemPrompt(userId);
 
+    // Flush dropped messages before compression to prevent info loss
+    const { removed } = compressMessages(messages);
+    if (removed.length > 0 && userId && this.memory) {
+      this.memory.flushDroppedMessages(userId, removed).catch(() => {});
+    }
+
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const tools = this.getTools();
       const openaiTools = tools.map(toolDefToOpenAI);
@@ -306,7 +312,7 @@ export class ConversationEngine {
 
       // No tool calls — we're done
       messages.push(chatMsg);
-      this.triggerLearn(sessionId, userId);
+      this.triggerMemoryHooks(sessionId, userId);
       yield { type: "done" };
       return;
     }
@@ -334,19 +340,23 @@ export class ConversationEngine {
   private async buildSystemPrompt(userId?: string): Promise<string> {
     const toolNames = this.getTools().map((t) => `- ${t.name}: ${t.description}`).join("\n");
 
-    let memorySection = "";
+    const sections: string[] = [];
+
     if (userId && this.memory) {
       const memoryContext = await this.memory.getMemoryContext(userId);
       if (memoryContext) {
-        memorySection = `\n\n【神经记忆网络检索结果】\n${memoryContext}\n以上信息已加载至工作记忆 (Working Memory)，请在回复中自然地体现对用户背景的理解。`;
+        sections.push(`【关于用户的记忆】\n${memoryContext}\n请始终记住以上信息，并在回复中自然地体现。`);
+      }
+
+      const commitmentsContext = await this.memory.getCommitmentsContext(userId);
+      if (commitmentsContext) {
+        sections.push(commitmentsContext);
       }
     }
 
-    return `你是一位具备自主认知能力的 AI 智能体，运行在 Cognitive Agent Platform (CAP) 架构上。你拥有以下核心能力：
+    const memorySection = sections.length > 0 ? `\n\n${sections.join("\n\n")}` : "";
 
-1. **神经记忆网络 (Neural Memory Network)**: 能够跨会话保持对用户偏好、背景和历史的持续学习
-2. **自主工具编排 (Autonomous Tool Orchestration)**: 通过 MCP 协议动态发现和调用外部工具
-3. **链式思维推理 (Chain-of-Thought Reasoning)**: 在复杂任务中展示深度思考过程
+    return `你是一位 helpful assistant，拥有访问工具的能力。
 
 可用工具列表：
 ${toolNames}
@@ -357,15 +367,17 @@ ${toolNames}
   }
 
   /**
-   * Trigger async knowledge extraction after a session ends.
+   * Trigger memory hooks after a conversation ends:
+   * 1. Append to daily log
+   * 2. Consolidate into long-term memory if enough new entries
    * Non-blocking — errors are silently caught.
    */
-  triggerLearn(sessionId: string, userId?: string): void {
+  triggerMemoryHooks(sessionId: string, userId?: string): void {
     if (!userId || !this.memory) return;
     const messages = this.getOrCreateSession(sessionId);
     // Fire-and-forget
-    this.memory.learn(userId, messages, sessionId).catch((err) => {
-      console.error("[Engine] triggerLearn failed:", err);
+    this.memory.afterConversation(userId, messages).catch((err) => {
+      console.error("[Engine] triggerMemoryHooks failed:", err);
     });
   }
 
