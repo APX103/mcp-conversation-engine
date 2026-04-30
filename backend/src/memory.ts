@@ -159,6 +159,10 @@ ${logsText}
         await this.db.updateLongTermMemory(userId, cleaned);
         console.log(`[Memory] consolidated for ${userId}`);
       }
+      // Clear processed daily logs so they don't accumulate and pollute
+      // future consolidation rounds.
+      await this.db.deleteDailyLogs(userId);
+      console.log(`[Memory] cleared daily logs for ${userId}`);
     } catch (err) {
       console.error("[Memory] consolidate failed:", err);
     }
