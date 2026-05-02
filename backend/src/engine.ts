@@ -333,7 +333,35 @@ export class ConversationEngine {
       return;
     }
 
-    yield { type: "error", content: "Max tool rounds reached" };
+    // Max rounds reached — ask the LLM to summarize progress and prompt the user
+    const summaryMessages = await buildApiMessages(systemPrompt, messages, {
+      summarize: (texts) => this.summarizeMessages(texts),
+    });
+    summaryMessages.push({
+      role: "user",
+      content:
+        "你已经达到了最大工具调用轮次限制。请总结一下你到目前为止做了什么、进行到了哪一步、还有什么未完成的工作，然后询问用户是否要继续。",
+    });
+
+    const summaryStream = await (this.openai.chat.completions.create as any)({
+      model: this.model,
+      messages: summaryMessages,
+      stream: true,
+    });
+
+    let summaryContent = "";
+    for await (const chunk of summaryStream) {
+      const delta = chunk.choices[0]?.delta;
+      if (!delta) continue;
+      if (delta.content) {
+        summaryContent += delta.content;
+        yield { type: "text", content: delta.content };
+      }
+    }
+
+    messages.push({ role: "assistant", content: summaryContent });
+    this.triggerMemoryHooks(sessionId, userId);
+    yield { type: "done" };
   }
 
   private async executeTool(name: string, args: Record<string, unknown>, userId?: string): Promise<string> {
