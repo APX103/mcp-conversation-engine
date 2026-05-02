@@ -493,6 +493,23 @@ export class DbManager {
     return result.deletedCount;
   }
 
+  async updateCandidateDecay(id: string, decay: number): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    const coll = this.client.db(this.dbName).collection('cognitiveCandidates');
+    await coll.updateOne({ _id: new ObjectId(id) }, { $set: { decay, updatedAt: new Date() } });
+  }
+
+  async getCandidatesBelowThreshold(userId: string, minDecay: number): Promise<any[]> {
+    const coll = this.client.db(this.dbName).collection('cognitiveCandidates');
+    return coll.find({ userId, stage: 'candidate', decay: { $lt: minDecay } }).toArray();
+  }
+
+  async deleteCandidatesBelowThreshold(userId: string, minDecay: number): Promise<number> {
+    const coll = this.client.db(this.dbName).collection('cognitiveCandidates');
+    const result = await coll.deleteMany({ userId, stage: 'candidate', decay: { $lt: minDecay } });
+    return result.deletedCount;
+  }
+
   // ── Cognitive Skills ──
 
   async addCognitiveSkill(doc: Omit<CognitiveSkillDoc, '_id' | 'createdAt' | 'updatedAt'>): Promise<string> {

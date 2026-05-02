@@ -136,6 +136,7 @@ export interface CognitiveCandidateDoc {
   stage: 'candidate' | 'rem' | 'promoted' | 'discarded';
   createdAt?: Date;
   expiresAt?: Date;
+  decay?: number;
 }
 
 export interface CognitiveSkillDoc {
