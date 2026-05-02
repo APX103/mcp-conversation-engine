@@ -529,6 +529,20 @@ async function start() {
           { timezone: tz }
         );
       }
+
+      // 4. Register cognitive decay task
+      if (cognitive) {
+        const DecayEngine = (await import('./cognitive/memory/decay.js')).DecayEngine;
+        const decayEngine = new DecayEngine(db, cognitive.config);
+        scheduler.register('cognitive-daily-decay', '0 5 * * *', async () => {
+          const userIds = await db!.getAllUserIdsWithCandidates();
+          let total = 0;
+          for (const userId of userIds) {
+            total += await decayEngine.applyDailyDecay(userId);
+          }
+          console.log(`[Cognitive] Daily decay: cleaned ${total} expired candidates across ${userIds.length} users`);
+        }, { timezone: tz });
+      }
     }
   }
 

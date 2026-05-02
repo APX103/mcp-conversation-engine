@@ -35,7 +35,7 @@ export const DEFAULT_COGNITIVE_CONFIG: CognitiveConfig = {
     schedule: '0 3 * * *',
     minScore: 3,
     decay: { rate: 0.02, boost: 0.1, min: 0.1 },
-    stages: { light: true, rem: false, deep: true },
+    stages: { light: true, rem: true, deep: true },
   },
   learn: {
     minToolCalls: 3,
@@ -46,7 +46,7 @@ export const DEFAULT_COGNITIVE_CONFIG: CognitiveConfig = {
   retrieval: {
     topK: 8,
     bm25: { enabled: true },
-    vector: { enabled: false },
+    vector: { enabled: true },
     fusion: { method: 'rrf', k: 60 },
   },
   redis: { url: 'redis://localhost:6379' },

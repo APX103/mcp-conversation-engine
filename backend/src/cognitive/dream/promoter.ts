@@ -27,8 +27,9 @@ export class DreamPromoter {
     private db: DbManager,
     private openai: OpenAI,
     private model: string,
+    reflector?: DreamReflector,
   ) {
-    this.reflector = new DreamReflector(bus, db, openai, model);
+    this.reflector = reflector || new DreamReflector(bus, db, openai, model);
     this.bus.on('dream.promote.start', this.handlePromote.bind(this));
   }
 

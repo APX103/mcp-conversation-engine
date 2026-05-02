@@ -1,7 +1,9 @@
+import { createHash } from 'crypto';
 import MiniSearch from 'minisearch';
 import type { DbManager } from '../../db.js';
 import type { CognitiveConfig } from '../config.js';
 import type { VectorEngine } from './vector.js';
+import type { CognitiveCache } from '../cache.js';
 
 interface SearchDoc {
   id: string;
@@ -19,13 +21,16 @@ export interface RetrievalResult {
 export class RetrievalEngine {
   private indexes = new Map<string, MiniSearch<SearchDoc>>();
   private vectorEngine?: VectorEngine;
+  private cache?: CognitiveCache;
 
   constructor(
     private db: DbManager,
     private config: CognitiveConfig,
     vectorEngine?: VectorEngine,
+    cache?: CognitiveCache,
   ) {
     this.vectorEngine = vectorEngine;
+    this.cache = cache;
   }
 
   async rebuildIndex(userId: string): Promise<void> {
@@ -90,6 +95,14 @@ export class RetrievalEngine {
   }
 
   async queryHybrid(userId: string, queryStr: string): Promise<RetrievalResult[]> {
+    // Check cache first
+    const queryHash = createHash('md5').update(`${userId}:${queryStr}`).digest('hex');
+    const cacheKey = `retrieval:${userId}:${queryHash}`;
+    if (this.cache) {
+      const cached = await this.cache.getJSON<RetrievalResult[]>(cacheKey);
+      if (cached) return cached;
+    }
+
     // Get BM25 results
     let index = this.indexes.get(userId);
     if (!index) await this.rebuildIndex(userId);
@@ -107,17 +120,17 @@ export class RetrievalEngine {
         const candidates = await this.db.getCandidatesWithEmbeddings(userId);
         const skills = await this.db.getCognitiveSkillsWithEmbeddings(userId);
 
-        const docs = candidates.map(c => ({
+        const docs: Array<{ id: string; embedding: number[]; text: string; type: string }> = candidates.map(c => ({
           id: c._id!.toString(),
           embedding: c.embedding,
           text: c.content,
-          type: 'memory' as const,
+          type: 'memory',
         }))
           .concat(skills.map(s => ({
             id: s._id!.toString(),
             embedding: s.embedding,
             text: `${s.description} ${s.content}`,
-            type: 'skill' as const,
+            type: 'skill',
           })));
 
         vectorResults = await this.vectorEngine.search(queryEmbedding, docs, 20);
@@ -158,14 +171,17 @@ export class RetrievalEngine {
 
     // Fallback to BM25 if no results
     if (fused.length === 0 && bm25Results.length > 0) {
-      return bm25Results.slice(0, this.config.retrieval.topK).map(r => ({
+      const fallback = bm25Results.slice(0, this.config.retrieval.topK).map(r => ({
         text: (r as any).text || '',
         score: r.score,
         type: (r as any).type || 'memory',
         source: r.id,
       }));
+      if (this.cache) await this.cache.setJSON(cacheKey, fallback, 3600);
+      return fallback;
     }
 
+    if (this.cache) await this.cache.setJSON(cacheKey, fused, 3600);
     return fused;
   }
 
