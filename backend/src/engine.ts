@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { Config, ChatMessage, StreamEvent, ToolDef, ToolCall } from "./types.js";
 import { createBuiltinTools } from "./tools.js";
+import { ServiceManager } from "./services/manager.js";
 import { McpManager } from "./mcp.js";
 import type { DbManager } from "./db.js";
 import { buildApiMessages, compressMessages } from "./context.js";
@@ -8,7 +9,7 @@ import { MemoryEngine } from "./memory.js";
 import { SkillEngine } from "./skill.js";
 import type { CognitiveAdapter } from './cognitive/adapter.js';
 
-const MAX_TOOL_ROUNDS = 10;
+const MAX_TOOL_ROUNDS = parseInt(process.env.MAX_TOOL_ROUNDS || "100", 10);
 
 function toolDefToOpenAI(tool: ToolDef): OpenAI.ChatCompletionTool {
   const properties: Record<string, any> = {};
@@ -53,6 +54,7 @@ export class ConversationEngine {
   private memory?: MemoryEngine;
   private skill?: SkillEngine;
   private cognitiveAdapter?: CognitiveAdapter;
+  private serviceManager: ServiceManager;
 
   constructor(config: Config, mcp: McpManager, db?: DbManager, memory?: MemoryEngine, skill?: SkillEngine, cognitiveAdapter?: CognitiveAdapter) {
     this.openai = new OpenAI({
@@ -67,6 +69,7 @@ export class ConversationEngine {
     this.memory = memory;
     this.skill = skill;
     this.cognitiveAdapter = cognitiveAdapter;
+    this.serviceManager = new ServiceManager();
 
     // Monkey-patch allTools to close over current state
     (this as any)._allTools = () => {
@@ -74,6 +77,7 @@ export class ConversationEngine {
         ...createBuiltinTools({
           getToolSchemas: (pattern) => this.mcp.getFullTools(pattern),
           db: this.db,
+          serviceManager: this.serviceManager,
           mode: config.builtinTools?.mode,
           disabled: config.builtinTools?.disabled,
           enabled: config.builtinTools?.enabled,

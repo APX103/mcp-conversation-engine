@@ -1,6 +1,13 @@
+# MCP Conversation Engine — Dual Instance Deployment
+#
+# Standalone:  docker network create shared-agent-net && docker compose up -d
+# Combined:    ../start-shared.sh [--with-redis]
+
 x-backend-common: &backend-common
   build: ./backend
   restart: unless-stopped
+  environment:
+    - MAX_TOOL_ROUNDS=100
 
 services:
   # ── Instance A ──
@@ -13,6 +20,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - default
+      - shared
 
   redis-a:
     image: redis:7-alpine
@@ -23,11 +33,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - default
+      - shared
 
   backend-a:
     <<: *backend-common
     ports:
       - "3000:3000"
+      - "9990-9999:9990-9999"
     volumes:
       - ./config-a.json:/config.json:ro
     depends_on:
@@ -35,6 +49,9 @@ services:
         condition: service_healthy
       redis-a:
         condition: service_healthy
+    networks:
+      - default
+      - shared
 
   frontend-a:
     build:
@@ -56,6 +73,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - default
+      - shared
 
   redis-b:
     image: redis:7-alpine
@@ -66,11 +86,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - default
+      - shared
 
   backend-b:
     <<: *backend-common
     ports:
       - "3001:3000"
+      - "10000-10009:9990-9999"
     volumes:
       - ./config-b.json:/config.json:ro
     depends_on:
@@ -78,6 +102,9 @@ services:
         condition: service_healthy
       redis-b:
         condition: service_healthy
+    networks:
+      - default
+      - shared
 
   frontend-b:
     build:
@@ -94,3 +121,10 @@ volumes:
   mongo-b-data:
   redis-a-data:
   redis-b-data:
+
+networks:
+  default:
+    name: mcp-conversation-engine_default
+  shared:
+    external: true
+    name: shared-agent-net
