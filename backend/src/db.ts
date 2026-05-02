@@ -550,6 +550,14 @@ export class DbManager {
       .updateOne({ _id: new ObjectId(id) }, { $set: { active: false, updatedAt: new Date() } });
   }
 
+  async updateCognitiveSkillConfidence(id: string, confidence: number): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    await this.client
+      .db(this.dbName)
+      .collection('cognitiveSkills')
+      .updateOne({ _id: new ObjectId(id) }, { $set: { confidence, updatedAt: new Date() } });
+  }
+
   async getAllUserIdsWithCandidates(): Promise<string[]> {
     const docs = await this.client
       .db(this.dbName)

@@ -47,6 +47,12 @@ export interface MemoryQueryPayload {
   query: string;
 }
 
+export interface SkillUsedPayload {
+  userId: string;
+  skillName: string;
+  success: boolean;
+}
+
 export type CognitiveEventMap = {
   'conversation.end': ConversationEndPayload;
   'memory.candidate.scored': MemoryCandidateScoredPayload;
@@ -54,6 +60,7 @@ export type CognitiveEventMap = {
   'learning.extract': LearningExtractPayload;
   'learning.skill.generated': SkillGeneratedPayload;
   'memory.query': MemoryQueryPayload;
+  'learning.skill.used': SkillUsedPayload;
   'error': Error;
 };
 
