@@ -1,5 +1,5 @@
 import { MongoClient, type WithId, type Document } from "mongodb";
-import type { ChatMessage } from "./types.js";
+import type { ChatMessage, CognitiveCandidateDoc, CognitiveSkillDoc } from "./types.js";
 
 export interface SessionDoc {
   sessionId: string;
@@ -443,5 +443,167 @@ export class DbManager {
       createdAt: doc.createdAt as Date,
       updatedAt: doc.updatedAt as Date,
     };
+  }
+
+  // ── Cognitive Candidates ──
+
+  async addCognitiveCandidate(doc: Omit<CognitiveCandidateDoc, '_id' | 'createdAt' | 'expiresAt'>): Promise<string> {
+    const { ObjectId } = await import("mongodb");
+    const result = await this.client.db(this.dbName).collection('cognitiveCandidates').insertOne({
+      ...doc,
+      _id: new ObjectId(),
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    } as any);
+    return result.insertedId.toString();
+  }
+
+  async getCognitiveCandidates(userId: string, stage?: string): Promise<CognitiveCandidateDoc[]> {
+    const query: any = { userId };
+    if (stage) query.stage = stage;
+    const docs = await this.client
+      .db(this.dbName)
+      .collection('cognitiveCandidates')
+      .find(query)
+      .sort({ createdAt: -1 })
+      .toArray();
+    return docs as unknown as CognitiveCandidateDoc[];
+  }
+
+  async countCandidates(userId: string, stage: string): Promise<number> {
+    return this.client
+      .db(this.dbName)
+      .collection('cognitiveCandidates')
+      .countDocuments({ userId, stage });
+  }
+
+  async updateCandidateStage(id: string, stage: string): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    await this.client
+      .db(this.dbName)
+      .collection('cognitiveCandidates')
+      .updateOne({ _id: new ObjectId(id) }, { $set: { stage } });
+  }
+
+  async deleteCandidates(userId: string, stage: string): Promise<number> {
+    const result = await this.client
+      .db(this.dbName)
+      .collection('cognitiveCandidates')
+      .deleteMany({ userId, stage });
+    return result.deletedCount;
+  }
+
+  async updateCandidateDecay(id: string, decay: number): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    const coll = this.client.db(this.dbName).collection('cognitiveCandidates');
+    await coll.updateOne({ _id: new ObjectId(id) }, { $set: { decay, updatedAt: new Date() } });
+  }
+
+  async getCandidatesBelowThreshold(userId: string, minDecay: number): Promise<any[]> {
+    const coll = this.client.db(this.dbName).collection('cognitiveCandidates');
+    return coll.find({ userId, stage: 'candidate', decay: { $lt: minDecay } }).toArray();
+  }
+
+  async deleteCandidatesBelowThreshold(userId: string, minDecay: number): Promise<number> {
+    const coll = this.client.db(this.dbName).collection('cognitiveCandidates');
+    const result = await coll.deleteMany({ userId, stage: 'candidate', decay: { $lt: minDecay } });
+    return result.deletedCount;
+  }
+
+  // ── Cognitive Skills ──
+
+  async addCognitiveSkill(doc: Omit<CognitiveSkillDoc, '_id' | 'createdAt' | 'updatedAt'>): Promise<string> {
+    const { ObjectId } = await import("mongodb");
+    const result = await this.client.db(this.dbName).collection('cognitiveSkills').insertOne({
+      ...doc,
+      _id: new ObjectId(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+    return result.insertedId.toString();
+  }
+
+  async getCognitiveSkills(userId: string): Promise<CognitiveSkillDoc[]> {
+    const docs = await this.client
+      .db(this.dbName)
+      .collection('cognitiveSkills')
+      .find({ userId })
+      .sort({ updatedAt: -1 })
+      .toArray();
+    return docs as unknown as CognitiveSkillDoc[];
+  }
+
+  async getActiveCognitiveSkills(userId: string): Promise<CognitiveSkillDoc[]> {
+    const docs = await this.client
+      .db(this.dbName)
+      .collection('cognitiveSkills')
+      .find({ userId, active: true, confirmedAt: { $ne: null } })
+      .sort({ confidence: -1 })
+      .toArray();
+    return docs as unknown as CognitiveSkillDoc[];
+  }
+
+  async confirmCognitiveSkill(id: string): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    await this.client
+      .db(this.dbName)
+      .collection('cognitiveSkills')
+      .updateOne({ _id: new ObjectId(id) }, { $set: { confirmedAt: new Date(), updatedAt: new Date() } });
+  }
+
+  async updateCognitiveSkillContent(id: string, content: string, version: number): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    await this.client
+      .db(this.dbName)
+      .collection('cognitiveSkills')
+      .updateOne({ _id: new ObjectId(id) }, { $set: { content, version, updatedAt: new Date() } });
+  }
+
+  async deactivateCognitiveSkill(id: string): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    await this.client
+      .db(this.dbName)
+      .collection('cognitiveSkills')
+      .updateOne({ _id: new ObjectId(id) }, { $set: { active: false, updatedAt: new Date() } });
+  }
+
+  async updateCognitiveSkillConfidence(id: string, confidence: number): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    await this.client
+      .db(this.dbName)
+      .collection('cognitiveSkills')
+      .updateOne({ _id: new ObjectId(id) }, { $set: { confidence, updatedAt: new Date() } });
+  }
+
+  async getAllUserIdsWithCandidates(): Promise<string[]> {
+    const docs = await this.client
+      .db(this.dbName)
+      .collection('cognitiveCandidates')
+      .distinct('userId');
+    return docs.filter((id): id is string => typeof id === "string");
+  }
+
+  // ── Embedding Storage ──
+
+  async updateCandidateEmbedding(id: string, embedding: number[]): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    const coll = this.client.db(this.dbName).collection('cognitiveCandidates');
+    await coll.updateOne({ _id: new ObjectId(id) }, { $set: { embedding } });
+  }
+
+  async getCandidatesWithEmbeddings(userId: string): Promise<any[]> {
+    const coll = this.client.db(this.dbName).collection('cognitiveCandidates');
+    return coll.find({ userId, embedding: { $exists: true, $ne: [] } }).toArray();
+  }
+
+  async getCognitiveSkillsWithEmbeddings(userId: string): Promise<any[]> {
+    const coll = this.client.db(this.dbName).collection('cognitiveSkills');
+    return coll.find({ userId, embedding: { $exists: true, $ne: [] } }).toArray();
+  }
+
+  async updateCognitiveSkillEmbedding(id: string, embedding: number[]): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    const coll = this.client.db(this.dbName).collection('cognitiveSkills');
+    await coll.updateOne({ _id: new ObjectId(id) }, { $set: { embedding } });
   }
 }

@@ -59,5 +59,18 @@
       "skill_update",
       "skill_delete"
     ]
+  },
+  "cognitive": {
+    "autoLevel": "semi-auto",
+    "dream": {
+      "threshold": 5,
+      "minScore": 3
+    },
+    "learn": {
+      "minToolCalls": 3
+    },
+    "retrieval": {
+      "topK": 8
+    }
   }
 }
