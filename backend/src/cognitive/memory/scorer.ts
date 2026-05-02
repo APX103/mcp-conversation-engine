@@ -1,6 +1,12 @@
 import type OpenAI from 'openai';
 import type { ChatMessage } from '../../types.js';
-import type { CognitiveCandidateDoc } from '../../types.js';
+
+export interface ScoredMemory {
+  content: string;
+  score: number;
+  type: 'preference' | 'fact' | 'method' | 'emotion';
+  confidence: number;
+}
 
 const SCORING_PROMPT = `从以下对话中提取值得长期记住的信息。
 对每条信息评分（1-5）：
@@ -17,7 +23,7 @@ const SCORING_PROMPT = `从以下对话中提取值得长期记住的信息。
 export class MemoryScorer {
   constructor(private openai: OpenAI, private model: string) {}
 
-  async score(messages: ChatMessage[]): Promise<Omit<CognitiveCandidateDoc, '_id' | 'createdAt' | 'expiresAt' | 'source' | 'stage'>[]> {
+  async score(messages: ChatMessage[]): Promise<ScoredMemory[]> {
     try {
       const conversationText = messages
         .map(m => `[${m.role}] ${m.content}`)
@@ -41,8 +47,8 @@ export class MemoryScorer {
     }
   }
 
-  private parseScoring(text: string): Omit<CognitiveCandidateDoc, '_id' | 'createdAt' | 'expiresAt' | 'source' | 'stage'>[] {
-    const candidates: Omit<CognitiveCandidateDoc, '_id' | 'createdAt' | 'expiresAt' | 'source' | 'stage'>[] = [];
+  private parseScoring(text: string): ScoredMemory[] {
+    const candidates: ScoredMemory[] = [];
     const lines = text.split('\n').filter(l => l.trim().startsWith('|'));
 
     for (const line of lines) {
@@ -52,7 +58,7 @@ export class MemoryScorer {
       const score = parseInt(match[1], 10);
       if (score < 3) continue;
 
-      const type = match[2].toLowerCase() as CognitiveCandidateDoc['type'];
+      const type = match[2].toLowerCase() as ScoredMemory['type'];
       const validTypes = ['preference', 'fact', 'method', 'emotion'];
       if (!validTypes.includes(type)) continue;
 
