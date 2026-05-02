@@ -85,6 +85,7 @@ export interface Config {
     disabled?: string[]; // for blacklist mode: tool names to disable
     enabled?: string[];  // for whitelist mode: only these tools are available
   };
+  systemPromptExtra?: string;
   cognitive?: {
     autoLevel?: 'manual' | 'semi-auto' | 'full-auto';
     dream?: { threshold?: number; minScore?: number };

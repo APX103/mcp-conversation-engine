@@ -1,5 +1,6 @@
 import type { ToolDef } from "./types.js";
 import type { DbManager } from "./db.js";
+import type { ServiceManager } from "./services/manager.js";
 import { parseSkillMarkdown } from "./skill.js";
 import { readFile, writeFile, readdir, mkdir, stat } from "fs/promises";
 import { resolve, relative, dirname, join } from "path";
@@ -313,11 +314,87 @@ function createSkillDelete(db: DbManager): ToolDef {
   };
 }
 
+// ── Dynamic service management ──
+
+function createServiceCreate(sm: ServiceManager): ToolDef {
+  return {
+    name: "create_service",
+    description:
+      "Create and start a dynamic Node.js HTTP service. " +
+      "The service runs as a child process with an assigned port. " +
+      "Use process.env.SERVICE_PORT to get the assigned port in your code. " +
+      "Returns the service ID, port, and URL.",
+    parameters: [
+      { name: "name", type: "string", description: "Service name (must be unique)", required: true },
+      { name: "code", type: "string", description: "Node.js ESM code to run. Use process.env.SERVICE_PORT for the assigned port.", required: true },
+    ],
+    async execute(args) {
+      try {
+        const info = await sm.createService(args.code as string, { name: args.name as string });
+        return `Service created:\n  ID: ${info.id}\n  Port: ${info.port}\n  Status: ${info.status}\n  URL (container): http://0.0.0.0:${info.port}\n  URL (host): http://host.docker.internal:${info.port}`;
+      } catch (err: any) {
+        return `Error: ${err.message}`;
+      }
+    },
+  };
+}
+
+function createServiceList(sm: ServiceManager): ToolDef {
+  return {
+    name: "list_services",
+    description: "List all running dynamic services and their ports. Also shows available ports in the pool.",
+    parameters: [],
+    async execute() {
+      const services = sm.listServices();
+      if (services.length === 0) {
+        const ports = sm.getAvailablePorts();
+        return `No services running.\nAvailable port pool: ${ports.start}-${ports.end} (${ports.available.length} free)`;
+      }
+      const lines = services.map(
+        (s) => `  ${s.id}: port=${s.port} status=${s.status} pid=${s.pid ?? "-"} started=${s.startedAt ?? "-"}`
+      );
+      const ports = sm.getAvailablePorts();
+      return `Running services (${services.length}):\n${lines.join("\n")}\n\nAvailable ports: ${ports.available.join(", ") || "none"} (${ports.available.length}/${ports.available.length + services.length})`;
+    },
+  };
+}
+
+function createServiceStop(sm: ServiceManager): ToolDef {
+  return {
+    name: "stop_service",
+    description: "Stop a running dynamic service by ID.",
+    parameters: [
+      { name: "id", type: "string", description: "Service ID to stop", required: true },
+    ],
+    async execute(args) {
+      const ok = sm.stopService(args.id as string);
+      return ok ? `Service "${args.id}" stopped.` : `Service "${args.id}" not found.`;
+    },
+  };
+}
+
+function createServiceLogs(sm: ServiceManager): ToolDef {
+  return {
+    name: "service_logs",
+    description: "Get recent logs from a dynamic service.",
+    parameters: [
+      { name: "id", type: "string", description: "Service ID", required: true },
+      { name: "tail", type: "number", description: "Number of log lines to return (default 30)", required: false },
+    ],
+    async execute(args) {
+      const logs = sm.getServiceLogs(args.id as string, (args.tail as number) || 30);
+      if (logs.length === 0) return `No logs for "${args.id}".`;
+      return logs.join("\n");
+    },
+  };
+}
+
 // ── Export ──
 
 export function createBuiltinTools(opts: {
   getToolSchemas: (namePattern: string) => ToolDef[];
   db?: DbManager;
+  serviceManager?: ServiceManager;
   mode?: "blacklist" | "whitelist";
   disabled?: string[];
   enabled?: string[];
@@ -337,6 +414,15 @@ export function createBuiltinTools(opts: {
       createSkillCreate(opts.db),
       createSkillUpdate(opts.db),
       createSkillDelete(opts.db)
+    );
+  }
+
+  if (opts.serviceManager) {
+    all.push(
+      createServiceCreate(opts.serviceManager),
+      createServiceList(opts.serviceManager),
+      createServiceStop(opts.serviceManager),
+      createServiceLogs(opts.serviceManager)
     );
   }
 
