@@ -582,4 +582,28 @@ export class DbManager {
       .distinct('userId');
     return docs.filter((id): id is string => typeof id === "string");
   }
+
+  // ── Embedding Storage ──
+
+  async updateCandidateEmbedding(id: string, embedding: number[]): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    const coll = this.client.db(this.dbName).collection('cognitiveCandidates');
+    await coll.updateOne({ _id: new ObjectId(id) }, { $set: { embedding } });
+  }
+
+  async getCandidatesWithEmbeddings(userId: string): Promise<any[]> {
+    const coll = this.client.db(this.dbName).collection('cognitiveCandidates');
+    return coll.find({ userId, embedding: { $exists: true, $ne: [] } }).toArray();
+  }
+
+  async getCognitiveSkillsWithEmbeddings(userId: string): Promise<any[]> {
+    const coll = this.client.db(this.dbName).collection('cognitiveSkills');
+    return coll.find({ userId, embedding: { $exists: true, $ne: [] } }).toArray();
+  }
+
+  async updateCognitiveSkillEmbedding(id: string, embedding: number[]): Promise<void> {
+    const { ObjectId } = await import("mongodb");
+    const coll = this.client.db(this.dbName).collection('cognitiveSkills');
+    await coll.updateOne({ _id: new ObjectId(id) }, { $set: { embedding } });
+  }
 }

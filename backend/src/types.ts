@@ -137,6 +137,7 @@ export interface CognitiveCandidateDoc {
   createdAt?: Date;
   expiresAt?: Date;
   decay?: number;
+  embedding?: number[];
 }
 
 export interface CognitiveSkillDoc {
@@ -153,4 +154,5 @@ export interface CognitiveSkillDoc {
   active: boolean;
   createdAt?: Date;
   updatedAt?: Date;
+  embedding?: number[];
 }

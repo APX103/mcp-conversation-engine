@@ -4,6 +4,7 @@ import { CognitiveBus } from './bus.js';
 import { validateCognitiveConfig, type CognitiveConfig } from './config.js';
 import { MemoryScorer } from './memory/scorer.js';
 import { RetrievalEngine } from './memory/retrieval.js';
+import { VectorEngine } from './memory/vector.js';
 import { DreamCollector } from './dream/collector.js';
 import { DreamPromoter } from './dream/promoter.js';
 import { LearnExtractor } from './learn/extractor.js';
@@ -15,17 +16,20 @@ export class CognitiveCore {
   readonly adapter: CognitiveAdapter;
   readonly config: CognitiveConfig;
   readonly retrieval: RetrievalEngine;
+  readonly vectorEngine?: VectorEngine;
 
   private constructor(
     config: CognitiveConfig,
     bus: CognitiveBus,
     adapter: CognitiveAdapter,
     retrieval: RetrievalEngine,
+    vectorEngine?: VectorEngine,
   ) {
     this.config = config;
     this.bus = bus;
     this.adapter = adapter;
     this.retrieval = retrieval;
+    this.vectorEngine = vectorEngine;
   }
 
   static create(
@@ -37,8 +41,15 @@ export class CognitiveCore {
     const config = validateCognitiveConfig(partialConfig || {});
     const bus = new CognitiveBus();
     const scorer = new MemoryScorer(openai, model);
-    const retrieval = new RetrievalEngine(db, config);
-    const adapter = new CognitiveAdapter(bus, db, config);
+
+    // Create vector engine if enabled
+    let vectorEngine: VectorEngine | undefined;
+    if (config.retrieval.vector.enabled) {
+      vectorEngine = new VectorEngine(openai, db);
+    }
+
+    const retrieval = new RetrievalEngine(db, config, vectorEngine);
+    const adapter = new CognitiveAdapter(bus, db, config, vectorEngine);
 
     // Wire up dream engine
     new DreamCollector(bus, scorer, db, config);
@@ -61,7 +72,7 @@ export class CognitiveCore {
       }
     });
 
-    return new CognitiveCore(config, bus, adapter, retrieval);
+    return new CognitiveCore(config, bus, adapter, retrieval, vectorEngine);
   }
 }
 

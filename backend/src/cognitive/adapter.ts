@@ -2,6 +2,7 @@ import type { ChatMessage } from '../types.js';
 import type { DbManager } from '../db.js';
 import type { CognitiveConfig } from './config.js';
 import type { CognitiveBus } from './bus.js';
+import type { VectorEngine } from './memory/vector.js';
 import { RetrievalEngine } from './memory/retrieval.js';
 
 export class CognitiveAdapter {
@@ -11,8 +12,9 @@ export class CognitiveAdapter {
     private bus: CognitiveBus,
     private db: DbManager,
     private config: CognitiveConfig,
+    vectorEngine?: VectorEngine,
   ) {
-    this.retrieval = new RetrievalEngine(db, config);
+    this.retrieval = new RetrievalEngine(db, config, vectorEngine);
   }
 
   async getMemoryContext(userId: string, query?: string): Promise<string> {
@@ -22,7 +24,12 @@ export class CognitiveAdapter {
     }
 
     await this.retrieval.rebuildIndex(userId);
-    const results = await this.retrieval.query(userId, query);
+
+    // Use hybrid query when vector engine is available, otherwise BM25 only
+    const results = this.retrieval['vectorEngine']
+      ? await this.retrieval.queryHybrid(userId, query)
+      : await this.retrieval.query(userId, query);
+
     const context = this.retrieval.formatAsContext(results);
 
     if (!context) {

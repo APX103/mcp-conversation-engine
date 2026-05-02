@@ -1,6 +1,7 @@
 import MiniSearch from 'minisearch';
 import type { DbManager } from '../../db.js';
 import type { CognitiveConfig } from '../config.js';
+import type { VectorEngine } from './vector.js';
 
 interface SearchDoc {
   id: string;
@@ -17,11 +18,15 @@ export interface RetrievalResult {
 
 export class RetrievalEngine {
   private indexes = new Map<string, MiniSearch<SearchDoc>>();
+  private vectorEngine?: VectorEngine;
 
   constructor(
     private db: DbManager,
     private config: CognitiveConfig,
-  ) {}
+    vectorEngine?: VectorEngine,
+  ) {
+    this.vectorEngine = vectorEngine;
+  }
 
   async rebuildIndex(userId: string): Promise<void> {
     const docs: SearchDoc[] = [];
@@ -82,6 +87,86 @@ export class RetrievalEngine {
       type: (r as any).type || 'memory',
       source: r.id,
     }));
+  }
+
+  async queryHybrid(userId: string, queryStr: string): Promise<RetrievalResult[]> {
+    // Get BM25 results
+    let index = this.indexes.get(userId);
+    if (!index) await this.rebuildIndex(userId);
+    index = this.indexes.get(userId);
+
+    const bm25Results = index
+      ? index.search(queryStr, { prefix: true, fuzzy: 0.2 }).slice(0, 20)
+      : [];
+
+    // Get vector results if vector engine available
+    let vectorResults: Array<{ id: string; text: string; type: string; score: number }> = [];
+    if (this.vectorEngine) {
+      try {
+        const queryEmbedding = await this.vectorEngine.embed(queryStr);
+        const candidates = await this.db.getCandidatesWithEmbeddings(userId);
+        const skills = await this.db.getCognitiveSkillsWithEmbeddings(userId);
+
+        const docs = candidates.map(c => ({
+          id: c._id!.toString(),
+          embedding: c.embedding,
+          text: c.content,
+          type: 'memory' as const,
+        }))
+          .concat(skills.map(s => ({
+            id: s._id!.toString(),
+            embedding: s.embedding,
+            text: `${s.description} ${s.content}`,
+            type: 'skill' as const,
+          })));
+
+        vectorResults = await this.vectorEngine.search(queryEmbedding, docs, 20);
+      } catch (err) {
+        console.error('[RetrievalEngine] vector search failed, falling back to BM25:', err);
+      }
+    }
+
+    // RRF fusion
+    const k = this.config.retrieval.fusion.k;
+    const rrfScores = new Map<string, { text: string; type: string; score: number; source: string }>();
+
+    bm25Results.forEach((r, idx) => {
+      const id = r.id;
+      const existing = rrfScores.get(id) || {
+        text: (r as any).text || '',
+        type: (r as any).type || 'memory',
+        score: 0,
+        source: r.id,
+      };
+      existing.score += 1 / (k + idx + 1);
+      rrfScores.set(id, existing);
+    });
+
+    vectorResults.forEach((r, idx) => {
+      const id = r.id;
+      const existing = rrfScores.get(id) || { text: r.text, type: r.type, score: 0, source: r.id };
+      existing.score += 1 / (k + idx + 1);
+      // Use vector score as a tiebreaker by adding a small boost
+      existing.score += r.score * 0.1;
+      rrfScores.set(id, existing);
+    });
+
+    const fused = [...rrfScores.values()]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, this.config.retrieval.topK)
+      .map(r => ({ text: r.text, score: r.score, type: r.type as any, source: 'hybrid' }));
+
+    // Fallback to BM25 if no results
+    if (fused.length === 0 && bm25Results.length > 0) {
+      return bm25Results.slice(0, this.config.retrieval.topK).map(r => ({
+        text: (r as any).text || '',
+        score: r.score,
+        type: (r as any).type || 'memory',
+        source: r.id,
+      }));
+    }
+
+    return fused;
   }
 
   formatAsContext(results: RetrievalResult[]): string {
