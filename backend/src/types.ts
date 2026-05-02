@@ -85,6 +85,12 @@ export interface Config {
     disabled?: string[]; // for blacklist mode: tool names to disable
     enabled?: string[];  // for whitelist mode: only these tools are available
   };
+  cognitive?: {
+    autoLevel?: 'manual' | 'semi-auto' | 'full-auto';
+    dream?: { threshold?: number; minScore?: number };
+    learn?: { minToolCalls?: number };
+    retrieval?: { topK?: number };
+  };
 }
 
 // ── User Memory (OpenClaw-style Markdown) ──

@@ -6,6 +6,7 @@ import type { DbManager } from "./db.js";
 import { buildApiMessages, compressMessages } from "./context.js";
 import { MemoryEngine } from "./memory.js";
 import { SkillEngine } from "./skill.js";
+import type { CognitiveAdapter } from './cognitive/adapter.js';
 
 const MAX_TOOL_ROUNDS = 10;
 
@@ -51,8 +52,9 @@ export class ConversationEngine {
   private db?: DbManager;
   private memory?: MemoryEngine;
   private skill?: SkillEngine;
+  private cognitiveAdapter?: CognitiveAdapter;
 
-  constructor(config: Config, mcp: McpManager, db?: DbManager, memory?: MemoryEngine, skill?: SkillEngine) {
+  constructor(config: Config, mcp: McpManager, db?: DbManager, memory?: MemoryEngine, skill?: SkillEngine, cognitiveAdapter?: CognitiveAdapter) {
     this.openai = new OpenAI({
       baseURL: config.llm.baseUrl,
       apiKey: config.llm.apiKey,
@@ -64,6 +66,7 @@ export class ConversationEngine {
     this.db = db;
     this.memory = memory;
     this.skill = skill;
+    this.cognitiveAdapter = cognitiveAdapter;
 
     // Monkey-patch allTools to close over current state
     (this as any)._allTools = () => {
@@ -351,22 +354,39 @@ export class ConversationEngine {
 
     const sections: string[] = [];
 
-    if (userId && this.memory) {
-      const memoryContext = await this.memory.getMemoryContext(userId);
-      if (memoryContext) {
-        sections.push(`【关于用户的记忆】\n${memoryContext}\n请始终记住以上信息，并在回复中自然地体现。`);
+    if (userId) {
+      if (this.cognitiveAdapter) {
+        const latestUserMsg = this.findLatestUserMessage();
+        const memoryContext = await this.cognitiveAdapter.getMemoryContext(userId, latestUserMsg);
+        if (memoryContext) {
+          sections.push(`【关于用户的记忆】\n${memoryContext}\n请始终记住以上信息，并在回复中自然地体现。`);
+        }
+      } else if (this.memory) {
+        const memoryContext = await this.memory.getMemoryContext(userId);
+        if (memoryContext) {
+          sections.push(`【关于用户的记忆】\n${memoryContext}\n请始终记住以上信息，并在回复中自然地体现。`);
+        }
       }
 
-      const commitmentsContext = await this.memory.getCommitmentsContext(userId);
-      if (commitmentsContext) {
-        sections.push(commitmentsContext);
+      if (this.memory) {
+        const commitmentsContext = await this.memory.getCommitmentsContext(userId);
+        if (commitmentsContext) {
+          sections.push(commitmentsContext);
+        }
       }
     }
 
-    if (userId && this.skill) {
-      const skillsContext = await this.skill.getSkillsContext(userId);
-      if (skillsContext) {
-        sections.push(skillsContext);
+    if (userId) {
+      if (this.cognitiveAdapter) {
+        const skillsContext = await this.cognitiveAdapter.getSkillsContext(userId);
+        if (skillsContext) {
+          sections.push(skillsContext);
+        }
+      } else if (this.skill) {
+        const skillsContext = await this.skill.getSkillsContext(userId);
+        if (skillsContext) {
+          sections.push(skillsContext);
+        }
       }
     }
 
@@ -380,6 +400,15 @@ ${toolNames}
 当需要使用工具时，请通过 function call 调用。对于 MCP 工具，如不确定参数 schema，可先使用 tool_search 获取完整定义。
 
 请使用与用户相同的语言回复。${memorySection}`;
+  }
+
+  private findLatestUserMessage(): string {
+    for (const msgs of this.sessions.values()) {
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].role === 'user') return msgs[i].content;
+      }
+    }
+    return '';
   }
 
   /**
@@ -402,6 +431,12 @@ ${toolNames}
     this.memory.afterConversation(userId, cleaned).catch((err) => {
       console.error("[Engine] triggerMemoryHooks failed:", err);
     });
+
+    if (this.cognitiveAdapter && userId) {
+      this.cognitiveAdapter.afterConversation(userId, cleaned).catch(err => {
+        console.error('[Cognitive] event emit failed:', err);
+      });
+    }
   }
 
   private async summarizeMessages(texts: string[]): Promise<string> {

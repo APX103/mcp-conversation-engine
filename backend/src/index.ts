@@ -8,6 +8,7 @@ import { DbManager } from "./db.js";
 import { MemoryEngine } from "./memory.js";
 import { SkillEngine } from "./skill.js";
 import { Scheduler } from "./scheduler.js";
+import { CognitiveCore } from "./cognitive/index.js";
 import OpenAI from "openai";
 
 const config = loadConfig();
@@ -18,6 +19,7 @@ let db: DbManager | undefined;
 let memory: MemoryEngine | undefined;
 let skillEngine: SkillEngine | undefined;
 let scheduler: Scheduler | undefined;
+let cognitive: CognitiveCore | undefined;
 
 app.use(cors());
 app.use(express.json());
@@ -365,6 +367,58 @@ app.put("/api/skills/:userId/:id", async (req, res) => {
   }
 });
 
+// ── Cognitive Skills ──
+
+app.get('/api/cognitive/skills/:userId', async (req, res) => {
+  try {
+    const skills = await db!.getCognitiveSkills(req.params.userId);
+    res.json(skills);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/cognitive/skills/:userId/pending', async (req, res) => {
+  try {
+    const all = await db!.getCognitiveSkills(req.params.userId);
+    const pending = all.filter(s => s.confirmedAt === null);
+    res.json(pending);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/cognitive/skills/:userId/:id/confirm', async (req, res) => {
+  try {
+    await db!.confirmCognitiveSkill(req.params.id);
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/cognitive/skills/:userId/:id', async (req, res) => {
+  try {
+    await db!.deactivateCognitiveSkill(req.params.id);
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/cognitive/candidates/:userId', async (req, res) => {
+  try {
+    const candidates = await db!.getCognitiveCandidates(req.params.userId, 'candidate');
+    res.json(candidates);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/cognitive/config', (_req, res) => {
+  res.json(cognitive?.config || null);
+});
+
 // Health check
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
@@ -414,6 +468,10 @@ async function start() {
     memory = new MemoryEngine(openai, config.llm.model, db);
     skillEngine = new SkillEngine(db);
     await skillEngine.initBuiltinSkills();
+
+    // Initialize CognitiveCore
+    cognitive = CognitiveCore.create(db, openai, config.llm.model, config.cognitive as any);
+    console.log('[Cognitive] Core initialized, mode:', cognitive.config.autoLevel);
 
     // ── Scheduler ──
     const schCfg = config.scheduler;
@@ -474,7 +532,7 @@ async function start() {
     }
   }
 
-  engine = new ConversationEngine(config, mcp, db, memory, skillEngine);
+  engine = new ConversationEngine(config, mcp, db, memory, skillEngine, cognitive?.adapter);
 
   app.listen(config.server.port, () => {
     console.log(`Server running at http://localhost:${config.server.port}`);
