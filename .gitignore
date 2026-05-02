@@ -1,6 +1,8 @@
 node_modules/
 dist/
 config.json
+config-a.json
+config-b.json
 config.xiaomi.json
 config.deepseek.json
 *.log

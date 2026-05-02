@@ -1,0 +1,96 @@
+x-backend-common: &backend-common
+  build: ./backend
+  restart: unless-stopped
+
+services:
+  # ── Instance A ──
+  mongodb-a:
+    image: mongo:7
+    volumes:
+      - mongo-a-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-a:
+    image: redis:7-alpine
+    volumes:
+      - redis-a-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend-a:
+    <<: *backend-common
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config-a.json:/config.json:ro
+    depends_on:
+      mongodb-a:
+        condition: service_healthy
+      redis-a:
+        condition: service_healthy
+
+  frontend-a:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE: "http://localhost:3000"
+    ports:
+      - "5174:80"
+    depends_on:
+      - backend-a
+
+  # ── Instance B ──
+  mongodb-b:
+    image: mongo:7
+    volumes:
+      - mongo-b-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-b:
+    image: redis:7-alpine
+    volumes:
+      - redis-b-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend-b:
+    <<: *backend-common
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./config-b.json:/config.json:ro
+    depends_on:
+      mongodb-b:
+        condition: service_healthy
+      redis-b:
+        condition: service_healthy
+
+  frontend-b:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE: "http://localhost:3001"
+    ports:
+      - "5175:80"
+    depends_on:
+      - backend-b
+
+volumes:
+  mongo-a-data:
+  mongo-b-data:
+  redis-a-data:
+  redis-b-data:
