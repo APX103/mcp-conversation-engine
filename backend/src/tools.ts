@@ -489,6 +489,7 @@ function createA2AGetTaskStatus(): ToolDef {
     description:
       "Get the status and result of a task sent via a2a_send_task. " +
       "Poll this tool until the state is 'completed' or 'failed'. " +
+      "All queries go through the A2A-center (proxied, not point-to-point). " +
       "Returns the task state and any result artifacts from the recipient agent.",
     parameters: [
       { name: "task_id", type: "string", description: "The task ID returned by a2a_send_task", required: true },
@@ -497,36 +498,29 @@ function createA2AGetTaskStatus(): ToolDef {
       const taskId = args.task_id as string;
 
       try {
-        // Try querying the recipient backend directly first (fastest path)
-        // We don't know which backend received it, so try A2A-center dashboard API first.
-        const res = await fetch(`${A2A_CENTER_URL}/dashboard/api/tasks?taskId=${encodeURIComponent(taskId)}`);
-        if (!res.ok) return `Error: HTTP ${res.status}`;
-        const data = await res.json();
-        const tasks = data.tasks || [];
-        const task = tasks.find((t: any) => t.id === taskId);
-        if (!task) return `Task ${taskId} not found in A2A-center.`;
+        const senderId = process.env.A2A_AGENT_ID;
+        const senderToken = process.env.A2A_AGENT_TOKEN;
+        let headers: Record<string, string> = {};
+        if (senderId && senderToken) {
+          headers["X-Agent-Id"] = senderId;
+          headers["X-Token"] = senderToken;
+        }
+
+        // Query A2A-center directly (proxied, NOT point-to-point)
+        const res = await fetch(`${A2A_CENTER_URL}/v1/tasks/get?taskId=${encodeURIComponent(taskId)}`, { headers });
+        if (!res.ok) {
+          const text = await res.text();
+          return `Error querying A2A-center: HTTP ${res.status}\n${text}`;
+        }
+        const task = await res.json();
 
         const state = task.status?.state || "unknown";
         let result = `Task ID: ${taskId}\nState: ${state}\nFrom: ${task.metadata?.fromAgent}\nTarget: ${task.metadata?.targetAgent}`;
 
-        // If completed, try to get full artifact from the recipient backend directly
-        if (state === "completed" || state === "failed") {
-          // The target agent URL is in the registered card; query its /tasks/get endpoint
-          const agentRes = await fetch(`${A2A_CENTER_URL}/dashboard/api/agents`);
-          const agentData = await agentRes.json();
-          const targetAgent = (agentData.agents || []).find((a: any) => a.id === task.metadata?.targetAgent);
-          if (targetAgent?.card?.url) {
-            try {
-              const directRes = await fetch(`${targetAgent.card.url}/tasks/get?taskId=${encodeURIComponent(taskId)}`, { timeout: 5000 } as any);
-              if (directRes.ok) {
-                const directTask = await directRes.json();
-                const artifactText = directTask.artifacts?.[0]?.parts?.[0]?.text;
-                if (artifactText) {
-                  result += `\n\n--- Result from agent ---\n${artifactText}`;
-                  return result;
-                }
-              }
-            } catch {}
+        if (task.artifacts && task.artifacts.length > 0) {
+          const artifactText = task.artifacts[0]?.parts?.[0]?.text;
+          if (artifactText) {
+            result += `\n\n--- Result from agent ---\n${artifactText}`;
           }
         }
 
