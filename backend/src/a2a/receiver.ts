@@ -172,6 +172,10 @@ export class A2AReceiver {
       this.agentId = data.agent_id as string;
       this.token = data.token as string;
 
+      // Export credentials so built-in tools can use them
+      process.env.A2A_AGENT_ID = this.agentId;
+      process.env.A2A_AGENT_TOKEN = this.token;
+
       console.log(`[A2A] Registered with A2A-center`);
       console.log(`[A2A]   agent_id: ${this.agentId}`);
       console.log(`[A2A]   token:    ${this.token?.slice(0, 8)}...`);

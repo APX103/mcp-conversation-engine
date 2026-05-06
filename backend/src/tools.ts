@@ -389,6 +389,155 @@ function createServiceLogs(sm: ServiceManager): ToolDef {
   };
 }
 
+// ── A2A tools ──
+
+const A2A_CENTER_URL = process.env.A2A_CENTER_URL || "http://a2a-center:8888";
+
+function createA2AListAgents(): ToolDef {
+  return {
+    name: "a2a_list_agents",
+    description:
+      "List all registered A2A agents from the A2A Center discovery service. " +
+      "Returns agent_id, name, description, URL, and skills for each agent. " +
+      "Use this to find other agents you can send tasks to.",
+    parameters: [],
+    async execute() {
+      try {
+        const res = await fetch(`${A2A_CENTER_URL}/dashboard/api/agents`);
+        if (!res.ok) return `Error: HTTP ${res.status}`;
+        const data = await res.json();
+        const agents = data.agents || [];
+        if (agents.length === 0) return "No agents registered in A2A-center.";
+        return agents
+          .map(
+            (a: any) =>
+              `- ${a.id}: ${a.card?.name || "Unnamed"}\n  ` +
+              `URL: ${a.card?.url || "none"}\n  ` +
+              `Skills: ${(a.card?.skills || []).map((s: any) => s.id).join(", ") || "none"}\n  ` +
+              `Desc: ${a.card?.description || ""}`
+          )
+          .join("\n\n");
+      } catch (err: any) {
+        return `Error: ${err.message}`;
+      }
+    },
+  };
+}
+
+function createA2ASendTask(): ToolDef {
+  return {
+    name: "a2a_send_task",
+    description:
+      "Send a task to another A2A agent via the A2A Center. " +
+      "You need an agent_id (discover via a2a_list_agents) and a message text. " +
+      "The task is routed asynchronously. Use a2a_get_task_status to poll for the result.",
+    parameters: [
+      { name: "target_agent_id", type: "string", description: "The recipient agent_id from a2a_list_agents", required: true },
+      { name: "message", type: "string", description: "The task message to send", required: true },
+      { name: "task_id", type: "string", description: "Optional custom task ID (auto-generated if omitted)", required: false },
+    ],
+    async execute(args) {
+      const target = args.target_agent_id as string;
+      const message = args.message as string;
+      const taskId = (args.task_id as string) || `task_${crypto.randomUUID().slice(0, 8)}`;
+
+      try {
+        // We need sender credentials. Since the backend itself is an A2A agent,
+        // we use its own agent_id/token if available. Otherwise register a temporary sender.
+        // For simplicity, we use the backend's receiver credentials from env.
+        const senderId = process.env.A2A_AGENT_ID;
+        const senderToken = process.env.A2A_AGENT_TOKEN;
+
+        let headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (senderId && senderToken) {
+          headers["X-Agent-Id"] = senderId;
+          headers["X-Token"] = senderToken;
+        }
+
+        const res = await fetch(`${A2A_CENTER_URL}/v1/tasks/send`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            id: taskId,
+            message: {
+              role: "user",
+              parts: [{ type: "text", text: message }],
+            },
+            params: { target },
+          }),
+        });
+
+        const text = await res.text();
+        let data: any;
+        try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+        if (!res.ok) {
+          return `Error sending task: HTTP ${res.status}\n${JSON.stringify(data, null, 2)}`;
+        }
+
+        return `Task sent successfully.\nTask ID: ${taskId}\nInitial state: ${data.status?.state || "unknown"}\nRecipient: ${target}`;
+      } catch (err: any) {
+        return `Error: ${err.message}`;
+      }
+    },
+  };
+}
+
+function createA2AGetTaskStatus(): ToolDef {
+  return {
+    name: "a2a_get_task_status",
+    description:
+      "Get the status and result of a task sent via a2a_send_task. " +
+      "Poll this tool until the state is 'completed' or 'failed'. " +
+      "Returns the task state and any result artifacts from the recipient agent.",
+    parameters: [
+      { name: "task_id", type: "string", description: "The task ID returned by a2a_send_task", required: true },
+    ],
+    async execute(args) {
+      const taskId = args.task_id as string;
+
+      try {
+        // Try querying the recipient backend directly first (fastest path)
+        // We don't know which backend received it, so try A2A-center dashboard API first.
+        const res = await fetch(`${A2A_CENTER_URL}/dashboard/api/tasks?taskId=${encodeURIComponent(taskId)}`);
+        if (!res.ok) return `Error: HTTP ${res.status}`;
+        const data = await res.json();
+        const tasks = data.tasks || [];
+        const task = tasks.find((t: any) => t.id === taskId);
+        if (!task) return `Task ${taskId} not found in A2A-center.`;
+
+        const state = task.status?.state || "unknown";
+        let result = `Task ID: ${taskId}\nState: ${state}\nFrom: ${task.metadata?.fromAgent}\nTarget: ${task.metadata?.targetAgent}`;
+
+        // If completed, try to get full artifact from the recipient backend directly
+        if (state === "completed" || state === "failed") {
+          // The target agent URL is in the registered card; query its /tasks/get endpoint
+          const agentRes = await fetch(`${A2A_CENTER_URL}/dashboard/api/agents`);
+          const agentData = await agentRes.json();
+          const targetAgent = (agentData.agents || []).find((a: any) => a.id === task.metadata?.targetAgent);
+          if (targetAgent?.card?.url) {
+            try {
+              const directRes = await fetch(`${targetAgent.card.url}/tasks/get?taskId=${encodeURIComponent(taskId)}`, { timeout: 5000 } as any);
+              if (directRes.ok) {
+                const directTask = await directRes.json();
+                const artifactText = directTask.artifacts?.[0]?.parts?.[0]?.text;
+                if (artifactText) {
+                  result += `\n\n--- Result from agent ---\n${artifactText}`;
+                  return result;
+                }
+              }
+            } catch {}
+          }
+        }
+
+        return result;
+      } catch (err: any) {
+        return `Error: ${err.message}`;
+      }
+    },
+  };
+}
+
 // ── Export ──
 
 export function createBuiltinTools(opts: {
@@ -406,6 +555,9 @@ export function createBuiltinTools(opts: {
     createWriteFile(),
     createEditFile(),
     createFetchUrl(),
+    createA2AListAgents(),
+    createA2ASendTask(),
+    createA2AGetTaskStatus(),
   ];
 
   if (opts.db) {
