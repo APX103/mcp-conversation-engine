@@ -42,6 +42,10 @@ services:
     ports:
       - "3000:3000"
       - "9990-9999:9990-9999"
+    environment:
+      - MAX_TOOL_ROUNDS=100
+      - A2A_AGENT_URL=http://backend-a:3000
+      - A2A_CENTER_URL=http://a2a-center:8888
     volumes:
       - ./config-a.json:/config.json:ro
     depends_on:
@@ -95,6 +99,10 @@ services:
     ports:
       - "3001:3000"
       - "10000-10009:9990-9999"
+    environment:
+      - MAX_TOOL_ROUNDS=100
+      - A2A_AGENT_URL=http://backend-b:3000
+      - A2A_CENTER_URL=http://a2a-center:8888
     volumes:
       - ./config-b.json:/config.json:ro
     depends_on:
