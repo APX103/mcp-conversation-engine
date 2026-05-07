@@ -391,9 +391,7 @@ function createServiceLogs(sm: ServiceManager): ToolDef {
 
 // ── A2A tools ──
 
-const A2A_CENTER_URL = process.env.A2A_CENTER_URL || "http://a2a-center:8888";
-
-function createA2AListAgents(): ToolDef {
+function createA2AListAgents(centerUrl: string): ToolDef {
   return {
     name: "a2a_list_agents",
     description:
@@ -403,7 +401,7 @@ function createA2AListAgents(): ToolDef {
     parameters: [],
     async execute() {
       try {
-        const res = await fetch(`${A2A_CENTER_URL}/dashboard/api/agents`);
+        const res = await fetch(`${centerUrl}/dashboard/api/agents`);
         if (!res.ok) return `Error: HTTP ${res.status}`;
         const data = await res.json();
         const agents = data.agents || [];
@@ -424,7 +422,7 @@ function createA2AListAgents(): ToolDef {
   };
 }
 
-function createA2ASendTask(): ToolDef {
+function createA2ASendTask(centerUrl: string): ToolDef {
   return {
     name: "a2a_send_task",
     description:
@@ -442,9 +440,6 @@ function createA2ASendTask(): ToolDef {
       const taskId = (args.task_id as string) || `task_${crypto.randomUUID().slice(0, 8)}`;
 
       try {
-        // We need sender credentials. Since the backend itself is an A2A agent,
-        // we use its own agent_id/token if available. Otherwise register a temporary sender.
-        // For simplicity, we use the backend's receiver credentials from env.
         const senderId = process.env.A2A_AGENT_ID;
         const senderToken = process.env.A2A_AGENT_TOKEN;
 
@@ -454,7 +449,7 @@ function createA2ASendTask(): ToolDef {
           headers["X-Token"] = senderToken;
         }
 
-        const res = await fetch(`${A2A_CENTER_URL}/v1/tasks/send`, {
+        const res = await fetch(`${centerUrl}/v1/tasks/send`, {
           method: "POST",
           headers,
           body: JSON.stringify({
@@ -483,7 +478,7 @@ function createA2ASendTask(): ToolDef {
   };
 }
 
-function createA2AGetTaskStatus(): ToolDef {
+function createA2AGetTaskStatus(centerUrl: string): ToolDef {
   return {
     name: "a2a_get_task_status",
     description:
@@ -506,8 +501,7 @@ function createA2AGetTaskStatus(): ToolDef {
           headers["X-Token"] = senderToken;
         }
 
-        // Query A2A-center directly (proxied, NOT point-to-point)
-        const res = await fetch(`${A2A_CENTER_URL}/v1/tasks/get?taskId=${encodeURIComponent(taskId)}`, { headers });
+        const res = await fetch(`${centerUrl}/v1/tasks/get?taskId=${encodeURIComponent(taskId)}`, { headers });
         if (!res.ok) {
           const text = await res.text();
           return `Error querying A2A-center: HTTP ${res.status}\n${text}`;
@@ -541,6 +535,7 @@ export function createBuiltinTools(opts: {
   mode?: "blacklist" | "whitelist";
   disabled?: string[];
   enabled?: string[];
+  a2aCenterUrl?: string;
 }): ToolDef[] {
   const all: ToolDef[] = [
     createToolSearch(opts.getToolSchemas),
@@ -549,10 +544,15 @@ export function createBuiltinTools(opts: {
     createWriteFile(),
     createEditFile(),
     createFetchUrl(),
-    createA2AListAgents(),
-    createA2ASendTask(),
-    createA2AGetTaskStatus(),
   ];
+
+  if (opts.a2aCenterUrl) {
+    all.push(
+      createA2AListAgents(opts.a2aCenterUrl),
+      createA2ASendTask(opts.a2aCenterUrl),
+      createA2AGetTaskStatus(opts.a2aCenterUrl)
+    );
+  }
 
   if (opts.db) {
     all.push(

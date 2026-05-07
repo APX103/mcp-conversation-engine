@@ -72,5 +72,28 @@
     "retrieval": {
       "topK": 8
     }
+  },
+  "a2a": {
+    "enabled": true,
+    "centerUrl": "http://a2a-center:8888",
+    "agentUrl": "http://localhost:3000",
+    "agentCard": {
+      "name": "MCP Conversation Agent",
+      "description": "An AI agent powered by MCP Conversation Engine. Receives A2A tasks, processes them using LLM reasoning and available tools, and pushes results back.",
+      "skills": [
+        {
+          "id": "general-chat",
+          "name": "General Chat",
+          "description": "Process general conversational tasks via LLM",
+          "tags": ["chat", "nlp", "conversation"]
+        },
+        {
+          "id": "tool-use",
+          "name": "Tool Use",
+          "description": "Use available MCP tools to accomplish tasks",
+          "tags": ["tools", "automation", "mcp"]
+        }
+      ]
+    }
   }
 }

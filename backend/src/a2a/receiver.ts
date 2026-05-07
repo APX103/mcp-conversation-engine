@@ -13,6 +13,7 @@
 import type { Express, Request, Response } from "express";
 import type { ConversationEngine } from "../engine.js";
 import type { DbManager } from "../db.js";
+import type { Config } from "../types.js";
 
 interface A2APart {
   type?: string;
@@ -80,15 +81,16 @@ export class A2AReceiver {
   private engine: ConversationEngine;
   private db?: DbManager;
   private userId = "a2a-agent";
+  private a2aConfig: Config["a2a"];
 
   constructor(opts: {
-    centerUrl: string;
-    agentUrl: string;
+    a2aConfig?: Config["a2a"];
     engine: ConversationEngine;
     db?: DbManager;
   }) {
-    this.centerUrl = opts.centerUrl;
-    this.agentUrl = opts.agentUrl;
+    this.a2aConfig = opts.a2aConfig;
+    this.centerUrl = opts.a2aConfig?.centerUrl || process.env.A2A_CENTER_URL || "http://a2a-center:8888";
+    this.agentUrl = opts.a2aConfig?.agentUrl || process.env.A2A_AGENT_URL || `http://localhost:3000`;
     this.engine = opts.engine;
     this.db = opts.db;
   }
@@ -186,9 +188,11 @@ export class A2AReceiver {
   }
 
   private buildAgentCard(): AgentCard {
+    const cfg = this.a2aConfig?.agentCard;
     return {
-      name: "MCP Conversation Agent",
+      name: cfg?.name || "MCP Conversation Agent",
       description:
+        cfg?.description ||
         "An AI agent powered by MCP Conversation Engine. Receives A2A tasks, processes them using LLM reasoning and available tools, and pushes results back.",
       url: this.agentUrl,
       version: "1.0.0",
@@ -197,20 +201,17 @@ export class A2AReceiver {
         pushNotifications: false,
         stateTransition: true,
       },
-      skills: [
-        {
-          id: "general-chat",
-          name: "General Chat",
-          description: "Process general conversational tasks via LLM",
-          tags: ["chat", "nlp", "conversation"],
-        },
-        {
-          id: "tool-use",
-          name: "Tool Use",
-          description: "Use available MCP tools to accomplish tasks",
-          tags: ["tools", "automation", "mcp"],
-        },
-      ],
+      skills:
+        cfg?.skills?.map((s) => ({
+          id: s.id,
+          name: s.name,
+          description: s.description,
+          tags: s.tags,
+        })) ||
+        [
+          { id: "general-chat", name: "General Chat", description: "Process general conversational tasks via LLM", tags: ["chat", "nlp", "conversation"] },
+          { id: "tool-use", name: "Tool Use", description: "Use available MCP tools to accomplish tasks", tags: ["tools", "automation", "mcp"] },
+        ],
       defaultInputModes: ["text"],
       defaultOutputModes: ["text"],
     };
@@ -253,12 +254,21 @@ export class A2AReceiver {
       // 4. Save session
       await this.engine.saveSession(sessionId);
 
-      // 5. Update task as completed
+      // 5. Update task as completed with reply in both history and artifacts
       task.status = { state: "completed", timestamp: new Date().toISOString() };
       task.artifacts = [
         {
           name: "result",
           parts: [{ type: "text", text: reply }],
+        },
+      ];
+      // Append the agent reply to history so A2A-center acts as a conversation hub
+      task.history = [
+        ...(task.history || []),
+        {
+          role: "agent",
+          parts: [{ type: "text", text: reply }],
+          metadata: { agent_id: this.agentId, agent_name: this.buildAgentCard().name },
         },
       ];
 
@@ -268,7 +278,22 @@ export class A2AReceiver {
       await this.pushResult(task);
     } catch (err: any) {
       console.error(`[A2A] Task ${task.id} failed:`, err.message);
+      const errorText = `Error: ${err.message}`;
       task.status = { state: "failed", timestamp: new Date().toISOString() };
+      task.artifacts = [
+        {
+          name: "result",
+          parts: [{ type: "text", text: errorText }],
+        },
+      ];
+      task.history = [
+        ...(task.history || []),
+        {
+          role: "agent",
+          parts: [{ type: "text", text: errorText }],
+          metadata: { agent_id: this.agentId, agent_name: this.buildAgentCard().name },
+        },
+      ];
       await this.pushResult(task);
     }
   }

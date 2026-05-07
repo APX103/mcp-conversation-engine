@@ -92,6 +92,21 @@ export interface Config {
     learn?: { minToolCalls?: number };
     retrieval?: { topK?: number };
   };
+  a2a?: {
+    enabled?: boolean;
+    centerUrl?: string;
+    agentUrl?: string;
+    agentCard?: {
+      name?: string;
+      description?: string;
+      skills?: Array<{
+        id: string;
+        name: string;
+        description?: string;
+        tags: string[];
+      }>;
+    };
+  };
 }
 
 // ── User Memory (OpenClaw-style Markdown) ──

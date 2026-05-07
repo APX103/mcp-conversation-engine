@@ -81,6 +81,7 @@ export class ConversationEngine {
           mode: config.builtinTools?.mode,
           disabled: config.builtinTools?.disabled,
           enabled: config.builtinTools?.enabled,
+          a2aCenterUrl: config.a2a?.centerUrl,
         }),
         ...this.mcp.getAllTools(),
       ];
