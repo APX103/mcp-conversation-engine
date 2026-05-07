@@ -263,19 +263,18 @@ export class A2AReceiver {
         },
       ];
       // Append the agent reply to history so A2A-center acts as a conversation hub
-      task.history = [
-        ...(task.history || []),
-        {
-          role: "agent",
-          parts: [{ type: "text", text: reply }],
-          metadata: { agent_id: this.agentId, agent_name: this.buildAgentCard().name },
-        },
-      ];
+      const agentReplyMessage: A2AMessage = {
+        role: "agent",
+        parts: [{ type: "text", text: reply }],
+        metadata: { agent_id: this.agentId, agent_name: this.buildAgentCard().name },
+      };
+      task.history = [...(task.history || []), agentReplyMessage];
 
       console.log(`[A2A] Task ${task.id} completed. Reply length: ${reply.length}`);
 
-      // 6. Push result to A2A-center
-      await this.pushResult(task);
+      // 6. Push result to A2A-center — only send the new history entry
+      // so the center doesn't duplicate the original user message.
+      await this.pushResult({ ...task, history: [agentReplyMessage] });
     } catch (err: any) {
       console.error(`[A2A] Task ${task.id} failed:`, err.message);
       const errorText = `Error: ${err.message}`;
@@ -286,15 +285,13 @@ export class A2AReceiver {
           parts: [{ type: "text", text: errorText }],
         },
       ];
-      task.history = [
-        ...(task.history || []),
-        {
-          role: "agent",
-          parts: [{ type: "text", text: errorText }],
-          metadata: { agent_id: this.agentId, agent_name: this.buildAgentCard().name },
-        },
-      ];
-      await this.pushResult(task);
+      const errorReplyMessage: A2AMessage = {
+        role: "agent",
+        parts: [{ type: "text", text: errorText }],
+        metadata: { agent_id: this.agentId, agent_name: this.buildAgentCard().name },
+      };
+      task.history = [...(task.history || []), errorReplyMessage];
+      await this.pushResult({ ...task, history: [errorReplyMessage] });
     }
   }
 
