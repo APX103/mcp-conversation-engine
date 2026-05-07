@@ -241,6 +241,19 @@ export class A2AReceiver {
         throw new Error("Task message contains no text part");
       }
 
+      // 2.5 Inject A2A identity so the LLM knows who it is
+      const card = this.buildAgentCard();
+      const fromAgent = task.metadata?.fromAgent || "unknown";
+      const identityPrompt =
+        `【A2A Agent 身份】\n` +
+        `你是 A2A agent「${card.name}」（ID: ${this.agentId}）。\n` +
+        `你的描述：${card.description}\n` +
+        `你的技能：${card.skills.map((s) => `${s.name}(${s.id})`).join("、")}\n` +
+        `\n` +
+        `当前任务来自 agent：${fromAgent}，任务 ID：${task.id}。\n` +
+        `请自然地回应，需要时可以使用你的工具。`;
+      this.engine.getOrCreateSession(sessionId).unshift({ role: "system", content: identityPrompt });
+
       // 3. Run the conversation engine
       let reply = "";
       for await (const event of this.engine.run(text, sessionId, this.userId)) {
