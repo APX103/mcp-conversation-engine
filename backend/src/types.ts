@@ -45,6 +45,17 @@ export type StreamEvent =
   | { type: "error"; content: string }
   | { type: "done" };
 
+// ── Research Stream Events (SSE) ──
+
+export type ResearchStreamEvent =
+  | { type: "research_started"; taskId: string; title: string }
+  | { type: "phase_changed"; phase: string; detail: string }
+  | { type: "progress"; current: number; total: number; message: string }
+  | { type: "finding"; sectionId: number; heading: string; summary: string }
+  | { type: "gap_detected"; gaps: string[] }
+  | { type: "report_ready"; taskId: string }
+  | { type: "error"; message: string };
+
 // ── Config ──
 
 export interface McpServerConfig {
@@ -91,6 +102,13 @@ export interface Config {
     dream?: { threshold?: number; minScore?: number };
     learn?: { minToolCalls?: number };
     retrieval?: { topK?: number };
+  };
+  deepResearch?: {
+    enabled?: boolean;
+    maxSearchRounds?: number;
+    maxPagesPerRound?: number;
+    maxTokensPerFinding?: number;
+    timeout?: number;
   };
 }
 
