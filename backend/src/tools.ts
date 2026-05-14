@@ -389,143 +389,6 @@ function createServiceLogs(sm: ServiceManager): ToolDef {
   };
 }
 
-// ── A2A tools ──
-
-function createA2AListAgents(centerUrl: string): ToolDef {
-  return {
-    name: "a2a_list_agents",
-    description:
-      "List all registered A2A agents from the A2A Center discovery service. " +
-      "Returns agent_id, name, description, URL, and skills for each agent. " +
-      "Use this to find other agents you can send tasks to.",
-    parameters: [],
-    async execute() {
-      try {
-        const res = await fetch(`${centerUrl}/dashboard/api/agents`);
-        if (!res.ok) return `Error: HTTP ${res.status}`;
-        const data = await res.json();
-        const agents = data.agents || [];
-        if (agents.length === 0) return "No agents registered in A2A-center.";
-        return agents
-          .map(
-            (a: any) =>
-              `- ${a.id}: ${a.card?.name || "Unnamed"}\n  ` +
-              `URL: ${a.card?.url || "none"}\n  ` +
-              `Skills: ${(a.card?.skills || []).map((s: any) => s.id).join(", ") || "none"}\n  ` +
-              `Desc: ${a.card?.description || ""}`
-          )
-          .join("\n\n");
-      } catch (err: any) {
-        return `Error: ${err.message}`;
-      }
-    },
-  };
-}
-
-function createA2ASendTask(centerUrl: string): ToolDef {
-  return {
-    name: "a2a_send_task",
-    description:
-      "Send a task to another A2A agent via the A2A Center. " +
-      "You need an agent_id (discover via a2a_list_agents) and a message text. " +
-      "The task is routed asynchronously. Use a2a_get_task_status to poll for the result.",
-    parameters: [
-      { name: "target_agent_id", type: "string", description: "The recipient agent_id from a2a_list_agents", required: true },
-      { name: "message", type: "string", description: "The task message to send", required: true },
-      { name: "task_id", type: "string", description: "Optional custom task ID (auto-generated if omitted)", required: false },
-    ],
-    async execute(args) {
-      const target = args.target_agent_id as string;
-      const message = args.message as string;
-      const taskId = (args.task_id as string) || `task_${crypto.randomUUID().slice(0, 8)}`;
-
-      try {
-        const senderId = process.env.A2A_AGENT_ID;
-        const senderToken = process.env.A2A_AGENT_TOKEN;
-
-        let headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (senderId && senderToken) {
-          headers["X-Agent-Id"] = senderId;
-          headers["X-Token"] = senderToken;
-        }
-
-        const res = await fetch(`${centerUrl}/v1/tasks/send`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            id: taskId,
-            message: {
-              role: "user",
-              parts: [{ type: "text", text: message }],
-            },
-            params: { target },
-          }),
-        });
-
-        const text = await res.text();
-        let data: any;
-        try { data = JSON.parse(text); } catch { data = { raw: text }; }
-
-        if (!res.ok) {
-          return `Error sending task: HTTP ${res.status}\n${JSON.stringify(data, null, 2)}`;
-        }
-
-        return `Task sent successfully.\nTask ID: ${taskId}\nInitial state: ${data.status?.state || "unknown"}\nRecipient: ${target}`;
-      } catch (err: any) {
-        return `Error: ${err.message}`;
-      }
-    },
-  };
-}
-
-function createA2AGetTaskStatus(centerUrl: string): ToolDef {
-  return {
-    name: "a2a_get_task_status",
-    description:
-      "Get the status and result of a task sent via a2a_send_task. " +
-      "Poll this tool until the state is 'completed' or 'failed'. " +
-      "All queries go through the A2A-center (proxied, not point-to-point). " +
-      "Returns the task state and any result artifacts from the recipient agent.",
-    parameters: [
-      { name: "task_id", type: "string", description: "The task ID returned by a2a_send_task", required: true },
-    ],
-    async execute(args) {
-      const taskId = args.task_id as string;
-
-      try {
-        const senderId = process.env.A2A_AGENT_ID;
-        const senderToken = process.env.A2A_AGENT_TOKEN;
-        let headers: Record<string, string> = {};
-        if (senderId && senderToken) {
-          headers["X-Agent-Id"] = senderId;
-          headers["X-Token"] = senderToken;
-        }
-
-        const res = await fetch(`${centerUrl}/v1/tasks/get?taskId=${encodeURIComponent(taskId)}`, { headers });
-        if (!res.ok) {
-          const text = await res.text();
-          return `Error querying A2A-center: HTTP ${res.status}\n${text}`;
-        }
-        const task = await res.json();
-
-        const state = task.status?.state || "unknown";
-        let result = `Task ID: ${taskId}\nState: ${state}\nFrom: ${task.metadata?.fromAgent}\nTarget: ${task.metadata?.targetAgent}`;
-
-        if (task.artifacts && task.artifacts.length > 0) {
-          const artifactText = task.artifacts[0]?.parts?.[0]?.text;
-          if (artifactText) {
-            result += `\n\n--- Result from agent ---\n${artifactText}`;
-          }
-        }
-
-        return result;
-      } catch (err: any) {
-        return `Error: ${err.message}`;
-      }
-    },
-  };
-}
-
 // ── Export ──
 
 export function createBuiltinTools(opts: {
@@ -535,7 +398,6 @@ export function createBuiltinTools(opts: {
   mode?: "blacklist" | "whitelist";
   disabled?: string[];
   enabled?: string[];
-  a2aCenterUrl?: string;
 }): ToolDef[] {
   const all: ToolDef[] = [
     createToolSearch(opts.getToolSchemas),
@@ -545,14 +407,6 @@ export function createBuiltinTools(opts: {
     createEditFile(),
     createFetchUrl(),
   ];
-
-  if (opts.a2aCenterUrl) {
-    all.push(
-      createA2AListAgents(opts.a2aCenterUrl),
-      createA2ASendTask(opts.a2aCenterUrl),
-      createA2AGetTaskStatus(opts.a2aCenterUrl)
-    );
-  }
 
   if (opts.db) {
     all.push(

@@ -9,7 +9,6 @@ import { MemoryEngine } from "./memory.js";
 import { SkillEngine } from "./skill.js";
 import { Scheduler } from "./scheduler.js";
 import { CognitiveCore } from "./cognitive/index.js";
-import { A2AReceiver } from "./a2a/receiver.js";
 import OpenAI from "openai";
 
 const config = loadConfig();
@@ -548,17 +547,6 @@ async function start() {
   }
 
   engine = new ConversationEngine(config, mcp, db, memory, skillEngine, cognitive?.adapter);
-
-  // ── A2A Receiver ──
-  if (config.a2a?.enabled !== false) {
-    const receiver = new A2AReceiver({
-      a2aConfig: config.a2a,
-      engine,
-      db,
-    });
-    receiver.mount(app);
-    await receiver.register();
-  }
 
   app.listen(config.server.port, () => {
     console.log(`Server running at http://localhost:${config.server.port}`);
