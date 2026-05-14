@@ -389,6 +389,29 @@ function createServiceLogs(sm: ServiceManager): ToolDef {
   };
 }
 
+// ── deep_research: 启动深度研究任务 ──
+
+function createDeepResearch(): ToolDef {
+  return {
+    name: "deep_research",
+    description:
+      "对复杂问题启动深度研究任务。系统将自动搜索多个信息源、阅读网页、综合发现并生成 HTML 调研报告。" +
+      "适用于需要跨多个信息源综合分析的问题，如市场调研、技术分析、竞品对比等。" +
+      "研究在后台运行，用户可以继续对话。" +
+      "调用此工具后，告诉用户'已启动深度研究任务，完成后可查看报告'。",
+    parameters: [
+      { name: "query", type: "string", description: "研究主题或问题", required: true },
+    ],
+    async execute(args, _userId?) {
+      return JSON.stringify({
+        action: "start_research",
+        query: args.query,
+        message: `深度研究任务已启动，主题：${args.query}。研究将在后台进行，完成后会通知用户查看报告。`,
+      });
+    },
+  };
+}
+
 // ── Export ──
 
 export function createBuiltinTools(opts: {
@@ -406,6 +429,7 @@ export function createBuiltinTools(opts: {
     createWriteFile(),
     createEditFile(),
     createFetchUrl(),
+    createDeepResearch(),
   ];
 
   if (opts.db) {
