@@ -38,6 +38,35 @@ interface Session {
   updatedAt: number;
 }
 
+// ── Research Types ──
+
+interface ResearchStreamEvent {
+  type: "research_started" | "phase_changed" | "progress" | "finding" | "gap_detected" | "report_ready" | "error";
+  taskId?: string;
+  title?: string;
+  phase?: string;
+  detail?: string;
+  current?: number;
+  total?: number;
+  message?: string;
+  sectionId?: number;
+  heading?: string;
+  summary?: string;
+  gaps?: string[];
+}
+
+interface ResearchState {
+  active: boolean;
+  taskId: string;
+  title: string;
+  phase: string;
+  detail: string;
+  progress: number;
+  findings: { sectionId: number; heading: string; summary: string }[];
+  completed: boolean;
+  error: string;
+}
+
 // ── Helpers ──
 
 /** Strip "mcp__servername__" prefix for cleaner display */
@@ -236,6 +265,11 @@ export default function App() {
   const [memorySaving, setMemorySaving] = useState(false);
   const [memoryConsolidating, setMemoryConsolidating] = useState(false);
   const [skills, setSkills] = useState<Array<{ _id: string; name: string; description: string; enabled: boolean; builtin: boolean }>>([]);
+  const [deepResearchMode, setDeepResearchMode] = useState(false);
+  const [researchState, setResearchState] = useState<ResearchState>({
+    active: false, taskId: "", title: "", phase: "", detail: "",
+    progress: 0, findings: [], completed: false, error: "",
+  });
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -610,9 +644,112 @@ export default function App() {
     return result;
   }
 
+  const startResearch = useCallback(async (query: string) => {
+    setResearchState({
+      active: true, taskId: "", title: query, phase: "starting", detail: "",
+      progress: 0, findings: [], completed: false, error: "",
+    });
+
+    try {
+      const res = await fetch("/api/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, sessionId: currentSessionId }),
+      });
+
+      if (!res.ok || !res.body) throw new Error("Failed to start research");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event: ResearchStreamEvent = JSON.parse(line.slice(6));
+
+            setResearchState((prev) => {
+              const next = { ...prev };
+              switch (event.type) {
+                case "research_started":
+                  next.taskId = event.taskId || "";
+                  next.title = event.title || prev.title;
+                  break;
+                case "phase_changed":
+                  next.phase = event.phase || "";
+                  next.detail = event.detail || "";
+                  break;
+                case "progress":
+                  next.progress = event.total ? Math.round(((event.current || 0) / event.total) * 100) : prev.progress;
+                  next.detail = event.message || prev.detail;
+                  break;
+                case "finding":
+                  next.findings = [...(prev.findings || []), {
+                    sectionId: event.sectionId || 0,
+                    heading: event.heading || "",
+                    summary: event.summary || "",
+                  }];
+                  break;
+                case "gap_detected":
+                  next.detail = `发现信息缺口，正在进行补充搜索：${(event.gaps || []).join("、")}`;
+                  break;
+                case "report_ready":
+                  next.completed = true;
+                  next.phase = "completed";
+                  next.progress = 100;
+                  next.taskId = event.taskId || prev.taskId;
+                  break;
+                case "error":
+                  next.error = event.message || "研究失败";
+                  next.active = false;
+                  break;
+              }
+              return next;
+            });
+          } catch {}
+        }
+      }
+    } catch (err: any) {
+      setResearchState((prev) => ({
+        ...prev,
+        error: err.message,
+        active: false,
+      }));
+    }
+  }, [currentSessionId]);
+
   const send = async () => {
     const text = input.trim();
     if (!text || sending) return;
+
+    // Deep research mode
+    if (deepResearchMode) {
+      setDeepResearchMode(false);
+      setMessages((prev) => [...prev, { role: "user" as const, content: input }]);
+      setInput("");
+      startResearch(input);
+      return;
+    }
+
+    // Handle /research command
+    if (input.trim().startsWith("/research ")) {
+      const researchQuery = input.trim().slice(10).trim();
+      if (researchQuery) {
+        setMessages((prev) => [...prev, { role: "user" as const, content: input }]);
+        setInput("");
+        startResearch(researchQuery);
+        return;
+      }
+    }
+
     setInput("");
     setSending(true);
 
@@ -1055,6 +1192,86 @@ export default function App() {
             </div>
           ))}
           <div ref={bottomRef} />
+
+          {/* Research Progress Card */}
+          {researchState.active && (
+            <div style={{
+              margin: "16px 0", padding: "16px 20px",
+              background: "#1e1b4b", border: "1px solid #4338ca",
+              borderRadius: "12px", color: "#e0e7ff",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+                <span style={{ fontSize: "18px" }}>🔬</span>
+                <strong style={{ fontSize: "15px" }}>深度研究进行中</strong>
+                {researchState.title && (
+                  <span style={{ color: "#a5b4fc", fontSize: "13px" }}>: {researchState.title}</span>
+                )}
+              </div>
+              <div style={{
+                width: "100%", height: "4px", background: "#312e81",
+                borderRadius: "2px", marginBottom: "12px", overflow: "hidden",
+              }}>
+                <div style={{
+                  width: `${researchState.progress}%`, height: "100%",
+                  background: "linear-gradient(90deg, #6366f1, #8b5cf6)",
+                  borderRadius: "2px", transition: "width 0.3s",
+                }} />
+              </div>
+              <div style={{ fontSize: "13px", color: "#c7d2fe" }}>
+                {researchState.detail || researchState.phase || "准备中..."}
+              </div>
+              {researchState.findings.length > 0 && (
+                <div style={{ marginTop: "12px", borderTop: "1px solid #312e81", paddingTop: "12px" }}>
+                  <div style={{ fontSize: "12px", color: "#818cf8", marginBottom: "8px" }}>
+                    已完成 {researchState.findings.length} 个章节的调研
+                  </div>
+                  {researchState.findings.map((f, i) => (
+                    <div key={i} style={{
+                      padding: "6px 0", fontSize: "13px",
+                      borderBottom: i < researchState.findings.length - 1 ? "1px solid #312e81" : "none",
+                    }}>
+                      <span style={{ color: "#818cf8", marginRight: "6px" }}>✓</span>
+                      <strong>{f.heading}</strong>
+                      <p style={{ margin: "4px 0 0", color: "#a5b4fc", fontSize: "12px" }}>
+                        {f.summary.slice(0, 100)}{f.summary.length > 100 ? "..." : ""}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {researchState.error && (
+                <div style={{ marginTop: "12px", color: "#f87171", fontSize: "13px" }}>
+                  ❌ {researchState.error}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Report Ready Card */}
+          {researchState.completed && researchState.taskId && (
+            <div style={{
+              margin: "16px 0", padding: "16px 20px",
+              background: "#052e16", border: "1px solid #16a34a",
+              borderRadius: "12px", color: "#dcfce7",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+                <span style={{ fontSize: "18px" }}>📊</span>
+                <strong>调研报告已生成</strong>
+              </div>
+              <a
+                href={`/api/research/${researchState.taskId}/report`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "inline-block", padding: "8px 20px",
+                  background: "#16a34a", color: "#fff",
+                  borderRadius: "8px", textDecoration: "none", fontSize: "14px",
+                }}
+              >
+                查看报告 →
+              </a>
+            </div>
+          )}
         </div>
 
         <form
@@ -1077,6 +1294,22 @@ export default function App() {
               }
             }}
           />
+            <button
+              onClick={() => setDeepResearchMode(!deepResearchMode)}
+              title="深度研究模式"
+              style={{
+                background: deepResearchMode ? "#6366f1" : "transparent",
+                border: `1px solid ${deepResearchMode ? "#6366f1" : "#555"}`,
+                borderRadius: "8px",
+                color: deepResearchMode ? "#fff" : "#999",
+                padding: "6px 12px",
+                fontSize: "13px",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              🔬 {deepResearchMode ? "研究模式" : "深度研究"}
+            </button>
           {sending ? (
             <button
               style={{ ...styles.stopButton }}
