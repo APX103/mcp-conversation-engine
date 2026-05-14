@@ -42,7 +42,7 @@ export class ResearchDB {
   async addFinding(taskId: string, finding: ResearchTaskDoc["findings"][0]): Promise<void> {
     await this.tasks().updateOne(
       { _id: taskId } as any,
-      { $push: { findings: finding } }
+      { $push: { findings: finding } } as any
     );
   }
 
