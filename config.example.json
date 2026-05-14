@@ -95,5 +95,12 @@
         }
       ]
     }
+  },
+  "deepResearch": {
+    "enabled": true,
+    "maxSearchRounds": 3,
+    "maxPagesPerRound": 10,
+    "maxTokensPerFinding": 2000,
+    "timeout": 900000
   }
 }

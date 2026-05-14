@@ -10,6 +10,7 @@ import { SkillEngine } from "./skill.js";
 import { Scheduler } from "./scheduler.js";
 import { CognitiveCore } from "./cognitive/index.js";
 import OpenAI from "openai";
+import { DeepResearchEngine } from "./research/index.js";
 
 const config = loadConfig();
 const app = express();
@@ -20,6 +21,7 @@ let memory: MemoryEngine | undefined;
 let skillEngine: SkillEngine | undefined;
 let scheduler: Scheduler | undefined;
 let cognitive: CognitiveCore | undefined;
+let researchEngine: DeepResearchEngine | undefined;
 
 app.use(cors());
 app.use(express.json());
@@ -45,6 +47,9 @@ app.get("/", (_req, res) => {
       { path: "GET /api/health", desc: "健康检查" },
     { path: "GET /api/scheduler", desc: "定时任务状态" },
     { path: "POST /api/scheduler/:name/run", desc: "手动触发定时任务" },
+      { path: "POST /api/research", desc: "启动深度研究，SSE 流式返回" },
+      { path: "GET /api/research/:taskId", desc: "获取研究任务状态" },
+      { path: "GET /api/research/:taskId/report", desc: "获取 HTML 调研报告" },
     ],
   });
 });
@@ -419,6 +424,81 @@ app.get('/api/cognitive/config', (_req, res) => {
   res.json(cognitive?.config || null);
 });
 
+// ── Deep Research ──
+
+// POST /api/research — 启动深度研究，SSE 流式返回进度
+app.post("/api/research", async (req, res) => {
+  const { query, sessionId } = req.body as { query?: string; sessionId?: string };
+
+  if (!query) {
+    res.status(400).json({ error: "query is required" });
+    return;
+  }
+
+  if (!researchEngine) {
+    res.status(500).json({ error: "Deep Research Engine not available" });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  try {
+    for await (const event of researchEngine.run(query, sessionId)) {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    }
+  } catch (err: any) {
+    res.write(`data: ${JSON.stringify({ type: "error", message: err.message })}\n\n`);
+  } finally {
+    res.end();
+  }
+});
+
+// GET /api/research/:taskId — 获取研究任务状态
+app.get("/api/research/:taskId", async (req, res) => {
+  const taskId = req.params.taskId;
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  try {
+    const { ResearchDB } = await import("./research/db.js");
+    const researchDb = new ResearchDB(db);
+    const task = await researchDb.getTask(taskId);
+    if (!task) {
+      res.status(404).json({ error: "Research task not found" });
+      return;
+    }
+    res.json(task);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/research/:taskId/report — 获取 HTML 报告
+app.get("/api/research/:taskId/report", async (req, res) => {
+  const taskId = req.params.taskId;
+  if (!db) {
+    res.status(500).json({ error: "MongoDB not configured" });
+    return;
+  }
+  try {
+    const { ResearchDB } = await import("./research/db.js");
+    const researchDb = new ResearchDB(db);
+    const html = await researchDb.getReport(taskId);
+    if (!html) {
+      res.status(404).json({ error: "Report not found" });
+      return;
+    }
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Health check
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
@@ -547,6 +627,12 @@ async function start() {
   }
 
   engine = new ConversationEngine(config, mcp, db, memory, skillEngine, cognitive?.adapter);
+
+  // Initialize Deep Research Engine
+  researchEngine = new DeepResearchEngine(config, mcp, db);
+  if (researchEngine.enabled) {
+    console.log("[Research] Deep Research Engine initialized");
+  }
 
   app.listen(config.server.port, () => {
     console.log(`Server running at http://localhost:${config.server.port}`);

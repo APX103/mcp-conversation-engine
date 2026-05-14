@@ -307,6 +307,16 @@ export class ConversationEngine {
             result,
           };
 
+          // deep_research: inject research notification into conversation
+          if (entry.name === "deep_research") {
+            try {
+              const parsed = JSON.parse(result);
+              if (parsed.action === "start_research") {
+                yield { type: "text", content: `\n\n> 🔬 ${parsed.message}` };
+              }
+            } catch {}
+          }
+
           toolResults.push({ id: entry.id, content: result });
         }
 
