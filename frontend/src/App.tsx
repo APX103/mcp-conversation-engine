@@ -3,6 +3,8 @@ import { MarkdownContent } from "./components/MarkdownContent";
 import { ThinkingBlock } from "./components/ThinkingBlock";
 import { ToolCallBlock } from "./components/ToolBlocks";
 import { ResearchChain } from "./components/ResearchChain";
+import TeamPanel from "./components/TeamPanel";
+import { useTeam } from "./hooks/useTeam";
 import { Spinner, BrainIcon, MemoryIcon, SendIcon, StopIcon, CloseIcon } from "./components/Icons";
 import { API_BASE, formatTime } from "./lib/utils";
 import type { Message, Session, StreamEvent, ResearchStreamEvent, ResearchState } from "./types";
@@ -45,8 +47,19 @@ export default function App() {
     progress: 0, findings: [], logs: [], completed: false, error: "",
   });
   const [researchSaved, setResearchSaved] = useState(false);
+  const [teamPanelOpen, setTeamPanelOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Team state
+  const {
+    team,
+    teammates,
+    tasks: teamTasks,
+    messages: teamMessages,
+    connected: teamConnected,
+    loadTeam,
+  } = useTeam();
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -117,6 +130,8 @@ export default function App() {
   const switchSession = async (sessionId: string) => {
     setCurrentSessionId(sessionId);
     setMessages([]);
+    // Load active team for this session
+    await loadTeam(sessionId);
     setResearchState({
       active: false, taskId: "", title: "", phase: "", detail: "",
       progress: 0, findings: [], logs: [], completed: false, error: "",
@@ -1008,6 +1023,17 @@ export default function App() {
           </div>
         </>
       )}
+
+      {/* Team Panel */}
+      <TeamPanel
+        team={team}
+        teammates={teammates}
+        tasks={teamTasks}
+        messages={teamMessages}
+        connected={teamConnected}
+        open={teamPanelOpen}
+        onToggle={() => setTeamPanelOpen((v) => !v)}
+      />
     </div>
   );
 }

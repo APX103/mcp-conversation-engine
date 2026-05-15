@@ -49,8 +49,15 @@ app.get("/", (_req, res) => {
       { path: "GET /api/sessions/:id", desc: "获取会话消息历史" },
       { path: "POST /api/chat", desc: "发送消息，SSE 流式返回" },
       { path: "GET /api/health", desc: "健康检查" },
-    { path: "GET /api/scheduler", desc: "定时任务状态" },
-    { path: "POST /api/scheduler/:name/run", desc: "手动触发定时任务" },
+      { path: "GET /api/scheduler", desc: "定时任务状态" },
+      { path: "POST /api/scheduler/:name/run", desc: "手动触发定时任务" },
+      { path: "GET /api/session/:sessionId/team", desc: "获取 session 的 active team" },
+      { path: "GET /api/team/:teamId", desc: "获取 team 状态" },
+      { path: "GET /api/team/:teamId/stream", desc: "Team 事件 SSE 流" },
+      { path: "GET /api/team/:teamId/members", desc: "获取团队成员" },
+      { path: "GET /api/team/:teamId/messages", desc: "获取消息 (?agentId=xxx)" },
+      { path: "POST /api/team/:teamId/message", desc: "发送消息" },
+      { path: "GET /api/team/:teamId/tasks", desc: "获取任务列表" },
       { path: "POST /api/research", desc: "启动深度研究，SSE 流式返回" },
       { path: "GET /api/research/:taskId", desc: "获取研究任务状态" },
       { path: "GET /api/research/:taskId/report", desc: "获取 HTML 调研报告" },
@@ -828,6 +835,114 @@ app.get("/api/subagent/:id/stream", async (req, res) => {
   req.on("close", () => {
     subagentBus.off(subagentId, listener);
   });
+});
+
+// ── Team ──
+
+import { TeamManager } from "./team/manager.js";
+
+// GET /api/session/:sessionId/team — get active team for a session
+app.get("/api/session/:sessionId/team", (req, res) => {
+  const manager = TeamManager.getInstance();
+  const team = manager.getTeamBySession(req.params.sessionId);
+  if (!team) {
+    res.status(404).json({ error: "No active team for this session" });
+    return;
+  }
+  res.json(team);
+});
+
+// GET /api/team/:teamId — get team state
+app.get("/api/team/:teamId", (req, res) => {
+  const manager = TeamManager.getInstance();
+  const team = manager.getTeam(req.params.teamId);
+  if (!team) {
+    res.status(404).json({ error: "Team not found" });
+    return;
+  }
+  res.json(team);
+});
+
+// GET /api/team/:teamId/stream — SSE stream of team events
+app.get("/api/team/:teamId/stream", (req, res) => {
+  const teamId = req.params.teamId;
+  const manager = TeamManager.getInstance();
+  const team = manager.getTeam(teamId);
+  if (!team) {
+    res.status(404).json({ error: "Team not found" });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const listener = (event: any) => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+
+  manager.on(teamId, listener);
+
+  req.on("close", () => {
+    manager.off(teamId, listener);
+  });
+});
+
+// GET /api/team/:teamId/members — list team members
+app.get("/api/team/:teamId/members", (req, res) => {
+  const manager = TeamManager.getInstance();
+  const team = manager.getTeam(req.params.teamId);
+  if (!team) {
+    res.status(404).json({ error: "Team not found" });
+    return;
+  }
+  res.json({ members: team.members });
+});
+
+// GET /api/team/:teamId/messages — get messages for an agent
+app.get("/api/team/:teamId/messages", (req, res) => {
+  const teamId = req.params.teamId;
+  const agentId = req.query.agentId as string | undefined;
+  if (!agentId) {
+    res.status(400).json({ error: "agentId query parameter is required" });
+    return;
+  }
+  const manager = TeamManager.getInstance();
+  const messages = manager.getMessages(teamId, agentId);
+  res.json({ messages });
+});
+
+// POST /api/team/:teamId/message — send a message
+app.post("/api/team/:teamId/message", (req, res) => {
+  const teamId = req.params.teamId;
+  const { from, to, type, content, metadata } = req.body;
+  if (!from || !to || !content) {
+    res.status(400).json({ error: "from, to, content are required" });
+    return;
+  }
+  const manager = TeamManager.getInstance();
+  try {
+    const message = manager.sendMessage(teamId, { from, to, type: type || "chat", content, metadata });
+    res.json({ message });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/team/:teamId/tasks — list tasks
+app.get("/api/team/:teamId/tasks", (req, res) => {
+  const manager = TeamManager.getInstance();
+  const tasks = manager.getTasks(req.params.teamId);
+  const stats = manager.getTaskStats(req.params.teamId);
+  res.json({ tasks, stats });
+});
+
+// GET /api/team/:teamId/tasks/available — list available tasks
+app.get("/api/team/:teamId/tasks/available", (req, res) => {
+  const manager = TeamManager.getInstance();
+  const tasks = manager.getAvailableTasks(req.params.teamId);
+  res.json({ tasks });
 });
 
 // Health check
