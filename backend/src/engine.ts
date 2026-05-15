@@ -698,12 +698,16 @@ export class ConversationEngine {
 ${memberList || "  (暂无成员)"}
 任务进度：${taskStats?.completed ?? 0}/${taskStats?.total ?? 0} 完成
 
-Team 协调纪律：
-- 使用 team_spawn_teammate 创建专门 teammate 处理子任务
-- 使用 team_send_message 与 teammate 通信（to: "<name>" 单播, to: "*" 广播）
-- 使用 team_create_task / team_assign_task 管理任务
-- 直接在回复中写文本，teammate 是看不到的 —— 必须使用工具通信
-- 所有任务完成后使用 team_disband 解散 team`;
+Team 协调纪律（必须遵守）：
+1. 使用 team_spawn_teammate 创建专门 teammate 处理子任务
+2. spawn 完所有 teammate 后，**必须**调用 team_wait_all 等待它们全部完成
+3. team_wait_all 返回结果后，整合所有 teammate 的产出，给用户一个完整的最终回复
+4. 使用 team_send_message 与 teammate 通信（to: "<name>" 单播, to: "*" 广播）
+5. 使用 team_create_task / team_assign_task 管理任务
+6. 直接在回复中写文本，teammate 是看不到的 —— 必须使用工具通信
+7. 所有任务完成后使用 team_disband 解散 team
+
+重要：不要在 spawn 完 teammate 后立即回复用户。必须调用 team_wait_all 收集结果后再回复。`;
     }
 
     return `你是一位 helpful assistant，拥有访问工具的能力。

@@ -279,6 +279,64 @@ export class TeamManager {
     return this.engines.get(agentId);
   }
 
+  /**
+   * Wait for all teammates to finish (completed / error / shutdown).
+   * Polls every second. Returns results summary.
+   */
+  async waitForAllTeammates(
+    teamId: string,
+    timeoutMs = 300_000
+  ): Promise<{
+    allDone: boolean;
+    timedOut: boolean;
+    members: Array<{
+      name: string;
+      status: string;
+      result: string;
+    }>;
+  }> {
+    const start = Date.now();
+    const pollInterval = 1000;
+
+    while (Date.now() - start < timeoutMs) {
+      const team = this.teams.get(teamId);
+      if (!team) {
+        throw new Error(`Team ${teamId} not found`);
+      }
+
+      const activeMembers = team.members.filter(
+        (m) => m.status === "idle" || m.status === "busy"
+      );
+      if (activeMembers.length === 0) {
+        // All done
+        return {
+          allDone: true,
+          timedOut: false,
+          members: team.members.map((m) => ({
+            name: m.name,
+            status: m.status,
+            result: m.result || "",
+          })),
+        };
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
+    // Timeout
+    const team = this.teams.get(teamId);
+    return {
+      allDone: false,
+      timedOut: true,
+      members:
+        team?.members.map((m) => ({
+          name: m.name,
+          status: m.status,
+          result: m.result || "",
+        })) ?? [],
+    };
+  }
+
   // ═══════════════════════════════════════════════════════════════
   //  Mailbox Operations
   // ═══════════════════════════════════════════════════════════════

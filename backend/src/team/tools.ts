@@ -21,6 +21,7 @@ export function createTeamTools(): ToolDef[] {
     createTeamListTasksTool(),
     createTeamUpdateTaskTool(),
     createTeamShutdownTeammateTool(),
+    createTeamWaitAllTool(),
   ];
 }
 
@@ -339,6 +340,28 @@ function createTeamShutdownTeammateTool(): ToolDef {
   };
 }
 
+function createTeamWaitAllTool(): ToolDef {
+  return {
+    name: "team_wait_all",
+    description:
+      "等待所有 teammate 完成各自的任务。在 spawn 完所有 teammate 后，必须调用此工具等待它们全部完成，然后收集结果返回给用户。" +
+      "此工具会阻塞直到所有 teammate 都完成（completed / error / shutdown），超时时间为 5 分钟。",
+    parameters: [
+      {
+        name: "timeout_seconds",
+        type: "number",
+        description: "最长等待时间（秒），默认 300",
+        required: false,
+      },
+    ],
+    execute: async (args, _userId) => {
+      return JSON.stringify({
+        error: "This tool must be called with session context. Use the engine integration.",
+      });
+    },
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  Engine Integration Helpers
 // ═══════════════════════════════════════════════════════════════
@@ -547,6 +570,49 @@ export async function executeTeamTool(
       );
       return JSON.stringify({
         message: `Teammate "${args.name}" 已关闭。`,
+      });
+    }
+
+    case "team_wait_all": {
+      if (!team) {
+        return JSON.stringify({ error: "No active team." });
+      }
+      const timeoutMs =
+        typeof args.timeout_seconds === "number"
+          ? args.timeout_seconds * 1000
+          : 300_000;
+
+      const waitResult = await manager.waitForAllTeammates(team.teamId, timeoutMs);
+
+      const completed = waitResult.members.filter((m) => m.status === "completed");
+      const failed = waitResult.members.filter(
+        (m) => m.status === "error" || m.status === "shutdown"
+      );
+
+      let summary = "";
+      if (waitResult.timedOut) {
+        summary = `等待超时。部分 teammate 可能仍在运行中。\n\n`;
+      } else {
+        summary = `所有 teammate 已完成。\n\n`;
+      }
+
+      for (const m of waitResult.members) {
+        summary += `【${m.name}】状态: ${m.status}\n`;
+        if (m.result) {
+          summary += `结果: ${m.result}\n`;
+        }
+        summary += "\n";
+      }
+
+      return JSON.stringify({
+        allDone: waitResult.allDone,
+        timedOut: waitResult.timedOut,
+        completed: completed.length,
+        failed: failed.length,
+        total: waitResult.members.length,
+        summary,
+        members: waitResult.members,
+        message: summary,
       });
     }
 
