@@ -12,7 +12,7 @@ import { Scheduler } from "./scheduler.js";
 import { CognitiveCore } from "./cognitive/index.js";
 import OpenAI from "openai";
 import { DeepResearchEngine } from "./research/index.js";
-import type { ResearchStreamEvent } from "./types.js";
+import type { ResearchStreamEvent, ChatMessage } from "./types.js";
 
 const config = loadConfig();
 const app = express();
@@ -154,16 +154,24 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-// GET /api/sessions/:id — get session messages
+// GET /api/sessions/:id — get session messages (always from DB, bypass memory cache)
 app.get("/api/sessions/:id", async (req, res) => {
   const sid = req.params.id;
-  await engine.loadSession(sid);
-  const messages = engine.getOrCreateSession(sid);
+  let messages: ChatMessage[] = [];
   let title = "New Chat";
   if (db) {
-    const doc = await db.getSession(sid).catch(() => null);
-    if (doc) title = doc.title;
+    try {
+      const doc = await db.getSession(sid);
+      if (doc) {
+        title = doc.title;
+        messages = (doc.messages as ChatMessage[]) ?? [];
+      }
+    } catch {
+      // ignore
+    }
   }
+  // Also sync to engine memory so subsequent chat uses the latest data
+  await engine.loadSession(sid);
   res.json({ sessionId: sid, title, messages });
 });
 

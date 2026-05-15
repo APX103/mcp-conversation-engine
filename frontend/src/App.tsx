@@ -787,7 +787,7 @@ export default function App() {
                 <div className="user-bubble">{msg.content}</div>
               ) : (
                 <div className="assistant-content">
-                  <div className="assistant-header">CAP</div>
+                  <div className="assistant-header">Nexus</div>
                   {msg.reasoning && <ThinkingBlock content={msg.reasoning} />}
                   {msg.content && <MarkdownContent content={msg.content} />}
                   {msg.toolCalls?.map((tc, j) => (
