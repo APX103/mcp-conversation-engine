@@ -133,54 +133,43 @@ export class ConversationEngine {
       result: "",
     });
 
-    const childTools = this.getBaseTools().filter((t) => t.name !== "spawn_agent");
-
-    if (mode === "async") {
-      // 异步模式：后台运行，事件实时推送到 bus，不等待结果
-      (async () => {
-        try {
-          for await (const event of subagentEngine.run(subagentId, task, childTools, context)) {
-            subagentBus.emit(subagentId, event);
-          }
-        } catch (err: any) {
-          console.error("[Subagent] Async run failed:", err);
-          await subagentDb.fail(subagentId, err.message);
-          subagentBus.emit(subagentId, { type: "error", message: err.message });
+    // MCP tools from getBaseTools don't have execute() — they rely on McpManager.toolExecuteMap.
+    // SubagentEngine runs standalone and only has the tools array, so we must inject execute()
+    // for every MCP tool before passing them to the subagent.
+    const childTools = this.getBaseTools()
+      .filter((t) => t.name !== "spawn_agent")
+      .map((t) => {
+        if (t.name.startsWith("mcp__") && !t.execute) {
+          return {
+            ...t,
+            execute: async (args: Record<string, unknown>, _userId?: string) => {
+              return this.mcp.executeTool(t.name, args, _userId);
+            },
+          };
         }
-      })();
-      return JSON.stringify({
-        subagentId,
-        status: "started",
-        mode: "async",
-        message: `子 agent 已在后台启动（ID: ${subagentId}），任务: ${task}`,
+        return t;
       });
-    }
 
-    // 同步模式：启动子 agent，通过 EventBus 实时推送事件，等待完成并返回结果
-    try {
-      for await (const event of subagentEngine.run(subagentId, task, childTools, context)) {
-        subagentBus.emit(subagentId, event);
+    // Always run subagent in background so the parent engine's SSE stream isn't blocked.
+    // The frontend observes execution in real-time via AgentBlock + /api/subagent/:id/stream.
+    (async () => {
+      try {
+        for await (const event of subagentEngine.run(subagentId, task, childTools, context)) {
+          subagentBus.emit(subagentId, event);
+        }
+      } catch (err: any) {
+        console.error("[Subagent] Run failed:", err);
+        await subagentDb.fail(subagentId, err.message);
+        subagentBus.emit(subagentId, { type: "error", message: err.message });
       }
-      const doc = await subagentDb.get(subagentId);
-      const result = doc?.result || "无结果";
-      return JSON.stringify({
-        subagentId,
-        status: "completed",
-        mode: "sync",
-        result,
-        message: `子 agent 已完成任务。结果：\n${result}`,
-      });
-    } catch (err: any) {
-      await subagentDb.fail(subagentId, err.message);
-      subagentBus.emit(subagentId, { type: "error", message: err.message });
-      return JSON.stringify({
-        subagentId,
-        status: "failed",
-        mode: "sync",
-        error: err.message,
-        message: `子 agent 执行失败：${err.message}`,
-      });
-    }
+    })();
+
+    return JSON.stringify({
+      subagentId,
+      status: "running",
+      mode: "async",
+      message: `子 agent 已启动（ID: ${subagentId}），任务: ${task}。正在执行中...`,
+    });
   }
 
   getOrCreateSession(sessionId: string): ChatMessage[] {

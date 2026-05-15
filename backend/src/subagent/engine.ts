@@ -258,6 +258,10 @@ ${toolNames}
       return "Error: 子 agent 不能递归调用 spawn_agent。请将任务分解后在父 agent 中并行调用。";
     }
 
+    if (!tool.execute) {
+      return `Error: Tool "${name}" has no execute function`;
+    }
+
     try {
       return await tool.execute(args);
     } catch (err: any) {
