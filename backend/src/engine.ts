@@ -195,6 +195,7 @@ export class ConversationEngine {
       );
 
       (async () => {
+        console.log(`[Teammate] Starting ${teammate.agentId} with task: ${(args.task as string).slice(0, 80)}...`);
         try {
           for await (const event of teammateEngine.run(args.task as string, childTools)) {
             manager.emit(team.teamId, {
@@ -203,6 +204,7 @@ export class ConversationEngine {
               event,
             });
           }
+          console.log(`[Teammate] ${teammate.agentId} finished successfully`);
         } catch (err: any) {
           console.error(`[Teammate] ${teammate.agentId} run failed:`, err);
           manager.updateTeammateStatus(team.teamId, teammate.agentId, "error");

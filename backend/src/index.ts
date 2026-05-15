@@ -879,14 +879,23 @@ app.get("/api/team/:teamId/stream", (req, res) => {
   res.flushHeaders();
 
   const listener = (event: any) => {
-    res.write(`data: ${JSON.stringify(event)}\n\n`);
+    if (res.writableEnded || res.destroyed) return;
+    try {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    } catch {
+      // ignore write errors on closed connections
+    }
   };
 
   manager.on(teamId, listener);
 
-  req.on("close", () => {
+  const removeListener = () => {
     manager.off(teamId, listener);
-  });
+  };
+  req.on("close", removeListener);
+  req.on("error", removeListener);
+  res.on("error", removeListener);
+  res.on("finish", removeListener);
 });
 
 // GET /api/team/:teamId/members — list team members

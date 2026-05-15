@@ -64,6 +64,7 @@ export class TeammateEngine {
     teamManager.updateTeammateStatus(this.teamId, this.agentId, "busy");
 
     try {
+      console.log(`[TeammateEngine] ${this.agentId} starting subagent run, subagentId=${this.subagentId}`);
       const gen = this.subagentEngine.run(
         this.subagentId,
         initialTask,
@@ -88,10 +89,12 @@ export class TeammateEngine {
       }
 
       // Subagent completed naturally
+      console.log(`[TeammateEngine] ${this.agentId} subagent completed, setting status=completed`);
+      const result = await this.getResultFromDb();
+      teamManager.setTeammateResult(this.teamId, this.agentId, result);
       teamManager.updateTeammateStatus(this.teamId, this.agentId, "completed");
 
       // Send idle notification to leader
-      const result = await this.getResultFromDb();
       teamManager.sendMessage(this.teamId, {
         from: this.agentId,
         to: "team-lead",
@@ -100,6 +103,7 @@ export class TeammateEngine {
         metadata: { result },
       });
     } catch (err: any) {
+      console.error(`[TeammateEngine] ${this.agentId} subagent error:`, err);
       teamManager.updateTeammateStatus(this.teamId, this.agentId, "error");
       teamManager.sendMessage(this.teamId, {
         from: this.agentId,
@@ -110,6 +114,7 @@ export class TeammateEngine {
       yield { type: "error", message: err.message };
     } finally {
       this.running = false;
+      console.log(`[TeammateEngine] ${this.agentId} run finished`);
     }
   }
 
@@ -287,15 +292,21 @@ ${tools}
   private async getResultFromDb(): Promise<string> {
     try {
       const doc = await this.db.get(this.subagentId);
-      if (doc?.result) return doc.result;
+      if (doc?.result) {
+        console.log(`[TeammateEngine] ${this.agentId} got result from DB: ${doc.result.slice(0, 100)}...`);
+        return doc.result;
+      }
       if (doc?.messages) {
         const lastAssistant = [...doc.messages]
           .reverse()
           .find((m) => m.role === "assistant");
-        return lastAssistant?.content || lastAssistant?.reasoning_content || "";
+        const fallback = lastAssistant?.content || lastAssistant?.reasoning_content || "";
+        console.log(`[TeammateEngine] ${this.agentId} fallback result from last assistant msg: ${fallback.slice(0, 100)}...`);
+        return fallback;
       }
-    } catch {
-      // ignore
+      console.log(`[TeammateEngine] ${this.agentId} no result found in DB`);
+    } catch (err: any) {
+      console.error(`[TeammateEngine] ${this.agentId} getResultFromDb failed:`, err.message);
     }
     return "";
   }

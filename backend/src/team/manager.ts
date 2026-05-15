@@ -295,8 +295,13 @@ export class TeamManager {
       result: string;
     }>;
   }> {
+    const team = this.teams.get(teamId);
+    const memberNames = team?.members.map((m) => `${m.name}(${m.status})`).join(", ") ?? "none";
+    console.log(`[TeamManager] waitForAllTeammates start: team=${teamId}, members=[${memberNames}], timeout=${timeoutMs}ms`);
+
     return new Promise((resolve, reject) => {
       let resolved = false;
+      let checkCount = 0;
 
       const cleanup = () => {
         if (resolved) return;
@@ -305,8 +310,9 @@ export class TeamManager {
         clearTimeout(timeoutTimer);
       };
 
-      const check = () => {
+      const check = (source: string) => {
         if (resolved) return;
+        checkCount++;
         const team = this.teams.get(teamId);
         if (!team) {
           cleanup();
@@ -318,6 +324,7 @@ export class TeamManager {
           (m) => m.status === "idle" || m.status === "busy"
         );
         if (activeMembers.length === 0) {
+          console.log(`[TeamManager] waitForAllTeammates resolved (source=${source}, checks=${checkCount}): all members done`);
           cleanup();
           resolve({
             allDone: true,
@@ -328,20 +335,24 @@ export class TeamManager {
               result: m.result || "",
             })),
           });
+        } else {
+          const activeNames = activeMembers.map((m) => `${m.name}(${m.status})`).join(", ");
+          console.log(`[TeamManager] waitForAllTeammates check #${checkCount} (source=${source}): still waiting for [${activeNames}]`);
         }
       };
 
-      const onEvent = () => check();
+      const onEvent = () => check("event");
 
       // Listen for team events — status changes wake us up immediately
       this.on(teamId, onEvent);
 
       // Initial check in case all members are already done
-      check();
+      check("initial");
 
       // Timeout
       const timeoutTimer = setTimeout(() => {
         const team = this.teams.get(teamId);
+        console.log(`[TeamManager] waitForAllTeammates timeout after ${timeoutMs}ms (checks=${checkCount})`);
         cleanup();
         resolve({
           allDone: false,
@@ -470,7 +481,17 @@ export class TeamManager {
   }
 
   emit(teamId: string, event: TeamStreamEvent): void {
-    this.eventBus.emit(teamId, event);
+    // Isolate listeners to prevent one throwing from killing the rest.
+    // Critical: frontend SSE res.write() may throw if connection dropped,
+    // which would otherwise block waitForAllTeammates from ever waking up.
+    const listeners = this.eventBus.listeners(teamId);
+    for (const listener of listeners) {
+      try {
+        (listener as (e: TeamStreamEvent) => void)(event);
+      } catch (err) {
+        console.error(`[TeamManager] Listener error for ${teamId}:`, err);
+      }
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════

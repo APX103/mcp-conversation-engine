@@ -78,6 +78,7 @@ ${toolNames}
     messages.push({ role: "user", content: task });
 
     // Save initial messages
+    console.log(`[SubagentEngine] ${subagentId} saving initial messages`);
     await this.db.updateMessages(subagentId, messages);
 
     yield { type: "subagent_started", subagentId, task };
@@ -88,6 +89,7 @@ ${toolNames}
       // Check timeout
       if (Date.now() - startTime > SUBAGENT_TIMEOUT_MS) {
         const timeoutMsg = "子 agent 执行超时（超过 5 分钟），请简化任务或分步骤执行。";
+        console.log(`[SubagentEngine] ${subagentId} timed out`);
         await this.db.fail(subagentId, timeoutMsg);
         yield { type: "error", message: timeoutMsg };
         return;
@@ -113,6 +115,7 @@ ${toolNames}
         return base;
       });
 
+      console.log(`[SubagentEngine] ${subagentId} calling API (round ${round + 1}/${MAX_TOOL_ROUNDS})`);
       const stream = await (this.openai.chat.completions.create as any)({
         model: this.model,
         messages: apiMessages,
@@ -234,12 +237,14 @@ ${toolNames}
       await this.db.updateMessages(subagentId, messages);
 
       const result = fullContent || "子 agent 未返回内容";
+      console.log(`[SubagentEngine] ${subagentId} completed with result length=${result.length}`);
       await this.db.complete(subagentId, result);
       yield { type: "subagent_completed", result };
       return;
     }
 
     // Max rounds reached
+    console.log(`[SubagentEngine] ${subagentId} max rounds reached`);
     const maxRoundsMsg = `子 agent 已达到最大工具调用轮次（${MAX_TOOL_ROUNDS} 轮）。当前进度：\n\n${messages.filter((m) => m.role === "assistant").map((m) => m.content).join("\n\n")}`;
     await this.db.complete(subagentId, maxRoundsMsg);
     yield { type: "subagent_completed", result: maxRoundsMsg };
