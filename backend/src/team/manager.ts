@@ -285,7 +285,7 @@ export class TeamManager {
    */
   async waitForAllTeammates(
     teamId: string,
-    timeoutMs = 300_000
+    timeoutMs = 1_800_000
   ): Promise<{
     allDone: boolean;
     timedOut: boolean;
@@ -295,46 +295,66 @@ export class TeamManager {
       result: string;
     }>;
   }> {
-    const start = Date.now();
-    const pollInterval = 1000;
+    return new Promise((resolve, reject) => {
+      let resolved = false;
 
-    while (Date.now() - start < timeoutMs) {
-      const team = this.teams.get(teamId);
-      if (!team) {
-        throw new Error(`Team ${teamId} not found`);
-      }
+      const cleanup = () => {
+        if (resolved) return;
+        resolved = true;
+        this.off(teamId, onEvent);
+        clearTimeout(timeoutTimer);
+      };
 
-      const activeMembers = team.members.filter(
-        (m) => m.status === "idle" || m.status === "busy"
-      );
-      if (activeMembers.length === 0) {
-        // All done
-        return {
-          allDone: true,
-          timedOut: false,
-          members: team.members.map((m) => ({
-            name: m.name,
-            status: m.status,
-            result: m.result || "",
-          })),
-        };
-      }
+      const check = () => {
+        if (resolved) return;
+        const team = this.teams.get(teamId);
+        if (!team) {
+          cleanup();
+          reject(new Error(`Team ${teamId} not found`));
+          return;
+        }
 
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
-    }
+        const activeMembers = team.members.filter(
+          (m) => m.status === "idle" || m.status === "busy"
+        );
+        if (activeMembers.length === 0) {
+          cleanup();
+          resolve({
+            allDone: true,
+            timedOut: false,
+            members: team.members.map((m) => ({
+              name: m.name,
+              status: m.status,
+              result: m.result || "",
+            })),
+          });
+        }
+      };
 
-    // Timeout
-    const team = this.teams.get(teamId);
-    return {
-      allDone: false,
-      timedOut: true,
-      members:
-        team?.members.map((m) => ({
-          name: m.name,
-          status: m.status,
-          result: m.result || "",
-        })) ?? [],
-    };
+      const onEvent = () => check();
+
+      // Listen for team events — status changes wake us up immediately
+      this.on(teamId, onEvent);
+
+      // Initial check in case all members are already done
+      check();
+
+      // Timeout
+      const timeoutTimer = setTimeout(() => {
+        const team = this.teams.get(teamId);
+        cleanup();
+        resolve({
+          allDone: false,
+          timedOut: true,
+          members:
+            team?.members.map((m) => ({
+              name: m.name,
+              status: m.status,
+              result: m.result || "",
+            })) ?? [],
+        });
+      }, timeoutMs);
+    });
   }
 
   // ═══════════════════════════════════════════════════════════════

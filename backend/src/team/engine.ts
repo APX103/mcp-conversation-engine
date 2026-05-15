@@ -18,6 +18,7 @@ export class TeammateEngine {
   private subagentEngine: SubagentEngine;
   private teamId: string;
   private agentId: string;
+  private subagentId: string; // MongoDB _id for SubagentDB operations
   private name: string;
   private abortController = new AbortController();
   private db: SubagentDB;
@@ -29,12 +30,14 @@ export class TeammateEngine {
     db: SubagentDB,
     teamId: string,
     agentId: string,
+    subagentId: string,
     name: string
   ) {
     this.subagentEngine = new SubagentEngine(config, db);
     this.db = db;
     this.teamId = teamId;
     this.agentId = agentId;
+    this.subagentId = subagentId;
     this.name = name;
   }
 
@@ -62,7 +65,7 @@ export class TeammateEngine {
 
     try {
       const gen = this.subagentEngine.run(
-        this.agentId,
+        this.subagentId,
         initialTask,
         tools,
         teamSystemPrompt
@@ -283,7 +286,7 @@ ${tools}
 
   private async getResultFromDb(): Promise<string> {
     try {
-      const doc = await this.db.get(this.agentId);
+      const doc = await this.db.get(this.subagentId);
       if (doc?.result) return doc.result;
       if (doc?.messages) {
         const lastAssistant = [...doc.messages]

@@ -172,18 +172,9 @@ export class ConversationEngine {
           return t;
         });
 
-      // 3. Start TeammateEngine in background (async)
+      // 3. Pre-create subagent record and get its MongoDB _id
       const subagentDb = new SubagentDB(this.db);
-      const teammateEngine = new TeammateEngine(
-        this.config,
-        subagentDb,
-        team.teamId,
-        teammate.agentId,
-        teammate.name
-      );
-
-      // Pre-create subagent record for stream endpoint compatibility
-      await subagentDb.create({
+      const subagentId = await subagentDb.create({
         parentSessionId: sessionId,
         parentToolCallId: "",
         task: args.task as string,
@@ -192,6 +183,16 @@ export class ConversationEngine {
         messages: [],
         result: "",
       });
+
+      // 4. Start TeammateEngine in background (async)
+      const teammateEngine = new TeammateEngine(
+        this.config,
+        subagentDb,
+        team.teamId,
+        teammate.agentId,
+        subagentId,
+        teammate.name
+      );
 
       (async () => {
         try {
