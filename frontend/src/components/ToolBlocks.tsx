@@ -22,8 +22,10 @@ function AgentBlock({ tc }: { tc: ToolCallItem }) {
     // ignore
   }
 
+  // Auto-connect SSE as soon as we have a subagentId, regardless of open state.
+  // This ensures completed status is updated and events are buffered for when user expands.
   useEffect(() => {
-    if (!subagentId || !open) return;
+    if (!subagentId) return;
     const controller = new AbortController();
     fetch(`${API_BASE}/api/subagent/${encodeURIComponent(subagentId)}/stream`, {
       signal: controller.signal,
@@ -50,7 +52,7 @@ function AgentBlock({ tc }: { tc: ToolCallItem }) {
       }
     }).catch(() => {});
     return () => controller.abort();
-  }, [subagentId, open]);
+  }, [subagentId]);
 
   return (
     <div className="tool-block agent">

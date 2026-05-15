@@ -965,9 +965,11 @@ async function start() {
     console.log("[Research] Deep Research Engine initialized");
   }
 
-  app.listen(config.server.port, () => {
+  const server = app.listen(config.server.port, () => {
     console.log(`Server running at http://localhost:${config.server.port}`);
   });
+  // Extend timeout for sync subagent calls (default Node.js timeout is 2 min)
+  server.timeout = 600_000; // 10 minutes
 }
 
 start().catch((err) => {

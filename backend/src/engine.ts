@@ -150,26 +150,52 @@ export class ConversationEngine {
         return t;
       });
 
-    // Always run subagent in background so the parent engine's SSE stream isn't blocked.
-    // The frontend observes execution in real-time via AgentBlock + /api/subagent/:id/stream.
-    (async () => {
-      try {
-        for await (const event of subagentEngine.run(subagentId, task, childTools, context)) {
-          subagentBus.emit(subagentId, event);
+    if (mode === "async") {
+      // 异步模式：后台运行，事件推送到 bus，立即返回
+      (async () => {
+        try {
+          for await (const event of subagentEngine.run(subagentId, task, childTools, context)) {
+            subagentBus.emit(subagentId, event);
+          }
+        } catch (err: any) {
+          console.error("[Subagent] Async run failed:", err);
+          await subagentDb.fail(subagentId, err.message);
+          subagentBus.emit(subagentId, { type: "error", message: err.message });
         }
-      } catch (err: any) {
-        console.error("[Subagent] Run failed:", err);
-        await subagentDb.fail(subagentId, err.message);
-        subagentBus.emit(subagentId, { type: "error", message: err.message });
-      }
-    })();
+      })();
+      return JSON.stringify({
+        subagentId,
+        status: "started",
+        mode: "async",
+        message: `子 agent 已在后台启动（ID: ${subagentId}），任务: ${task}`,
+      });
+    }
 
-    return JSON.stringify({
-      subagentId,
-      status: "running",
-      mode: "async",
-      message: `子 agent 已启动（ID: ${subagentId}），任务: ${task}。正在执行中...`,
-    });
+    // 同步模式：阻塞等待子 agent 完成，返回实际结果
+    try {
+      for await (const event of subagentEngine.run(subagentId, task, childTools, context)) {
+        subagentBus.emit(subagentId, event);
+      }
+      const doc = await subagentDb.get(subagentId);
+      const result = doc?.result || "无结果";
+      return JSON.stringify({
+        subagentId,
+        status: "completed",
+        mode: "sync",
+        result,
+        message: `子 agent 已完成任务。结果：\n${result}`,
+      });
+    } catch (err: any) {
+      await subagentDb.fail(subagentId, err.message);
+      subagentBus.emit(subagentId, { type: "error", message: err.message });
+      return JSON.stringify({
+        subagentId,
+        status: "failed",
+        mode: "sync",
+        error: err.message,
+        message: `子 agent 执行失败：${err.message}`,
+      });
+    }
   }
 
   getOrCreateSession(sessionId: string): ChatMessage[] {
