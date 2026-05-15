@@ -35,6 +35,11 @@ export default function App() {
   const [memoryConsolidating, setMemoryConsolidating] = useState(false);
   const [skills, setSkills] = useState<Array<{ _id: string; name: string; description: string; enabled: boolean; builtin: boolean }>>([]);
   const [deepResearchMode, setDeepResearchMode] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const saved = localStorage.getItem("theme");
+    if (saved === "light" || saved === "dark") return saved;
+    return "dark";
+  });
   const [researchState, setResearchState] = useState<ResearchState>({
     active: false, taskId: "", title: "", phase: "", detail: "",
     progress: 0, findings: [], logs: [], completed: false, error: "",
@@ -50,6 +55,11 @@ export default function App() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }, [theme]);
 
   useEffect(() => {
     if (!username) return;
@@ -322,6 +332,8 @@ export default function App() {
   };
 
   // ── Thinking Config ──
+
+  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
 
   const toggleThinking = async () => {
     const next = !thinkingEnabled;
@@ -702,6 +714,16 @@ export default function App() {
         </div>
 
         <div className="sidebar-controls">
+          <div className="control-row">
+            <span className="control-label">主题</span>
+            <button
+              className="theme-toggle-btn"
+              onClick={toggleTheme}
+              title={theme === "dark" ? "切换到浅色" : "切换到深色"}
+            >
+              {theme === "dark" ? "🌙" : "☀️"}
+            </button>
+          </div>
           <div className="control-row">
             <span className="control-label">Thinking</span>
             <button className={`toggle-switch ${thinkingEnabled ? "on" : ""}`} onClick={toggleThinking}>

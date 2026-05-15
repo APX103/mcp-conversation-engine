@@ -1,9 +1,9 @@
 /* ============================================================
-   Nexus — Dark Theme Design System
+   Nexus — Theme Design System (Dark + Light)
    ============================================================ */
 
+/* ── Dark Theme (default) ── */
 :root {
-  /* Backgrounds */
   --bg-deepest:   #080808;
   --bg-primary:   #0d0d0d;
   --bg-secondary: #141414;
@@ -12,62 +12,106 @@
   --bg-hover:     #2a2a2a;
   --bg-active:    #333333;
 
-  /* Text */
   --text-primary:   #ececec;
   --text-secondary: #a0a0a0;
   --text-tertiary:  #666666;
   --text-muted:     #444444;
   --text-inverse:   #0d0d0d;
 
-  /* Accent */
   --accent:       #6366f1;
   --accent-hover: #818cf8;
   --accent-dim:   rgba(99, 102, 241, 0.15);
   --accent-glow:  rgba(99, 102, 241, 0.4);
 
-  /* Border */
   --border:       #2a2a2a;
   --border-light: #333333;
   --border-hover: #444444;
 
-  /* Status */
   --success: #22c55e;
   --warning: #f59e0b;
   --error:   #ef4444;
   --info:    #3b82f6;
 
-  /* Tool Call */
   --tool-bg:     #131b2e;
   --tool-border: #1e3a5c;
   --tool-text:   #94b8ff;
 
-  /* Agent */
   --agent-bg:     #1a1030;
   --agent-border: #4c1d95;
   --agent-text:   #c4b5fd;
 
-  /* Research */
   --research-bg:     #12101a;
   --research-border: #312e4a;
   --research-accent: #818cf8;
 
-  /* Reasoning */
   --reasoning-bg:     #1a1810;
   --reasoning-border: #5c4d20;
   --reasoning-text:   #d4c5a0;
 
-  /* Typography */
+  --code-text: #e0e7ff;
+  --surface-glass: rgba(255, 255, 255, 0.03);
+  --surface-stripe: rgba(255, 255, 255, 0.02);
+
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
 
-  /* Spacing */
   --radius-sm:  6px;
   --radius-md:  10px;
   --radius-lg:  14px;
   --radius-xl:  20px;
 
-  /* Sidebar */
   --sidebar-width: 260px;
+}
+
+/* ── Light Theme ── */
+[data-theme="light"] {
+  --bg-deepest:   #f0f0f0;
+  --bg-primary:   #ffffff;
+  --bg-secondary: #f7f7f8;
+  --bg-tertiary:  #f0f0f0;
+  --bg-elevated:  #ffffff;
+  --bg-hover:     #f0f0f0;
+  --bg-active:    #e8e8e8;
+
+  --text-primary:   #1a1a1a;
+  --text-secondary: #555555;
+  --text-tertiary:  #888888;
+  --text-muted:     #bbbbbb;
+  --text-inverse:   #ffffff;
+
+  --accent:       #4f46e5;
+  --accent-hover: #6366f1;
+  --accent-dim:   rgba(79, 70, 229, 0.1);
+  --accent-glow:  rgba(79, 70, 229, 0.3);
+
+  --border:       #e5e5e5;
+  --border-light: #eeeeee;
+  --border-hover: #d0d0d0;
+
+  --success: #16a34a;
+  --warning: #d97706;
+  --error:   #dc2626;
+  --info:    #2563eb;
+
+  --tool-bg:     #f1f5f9;
+  --tool-border: #cbd5e1;
+  --tool-text:   #475569;
+
+  --agent-bg:     #faf5ff;
+  --agent-border: #d8b4fe;
+  --agent-text:   #7c3aed;
+
+  --research-bg:     #f5f3ff;
+  --research-border: #ddd6fe;
+  --research-accent: #6366f1;
+
+  --reasoning-bg:     #fffbeb;
+  --reasoning-border: #fde68a;
+  --reasoning-text:   #92400e;
+
+  --code-text: #334155;
+  --surface-glass: rgba(0, 0, 0, 0.03);
+  --surface-stripe: rgba(0, 0, 0, 0.02);
 }
 
 /* ── Reset ── */
@@ -87,6 +131,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.5;
   overflow: hidden;
+  transition: background 0.3s, color 0.3s;
 }
 
 /* ── Scrollbar ── */
@@ -118,6 +163,7 @@ body {
   flex-direction: column;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border);
+  transition: background 0.3s, border-color 0.3s;
 }
 
 .sidebar-header {
@@ -141,6 +187,7 @@ body {
 
 .sidebar-brand-icon {
   font-size: 18px;
+  color: var(--accent);
 }
 
 .btn-new-chat {
@@ -182,7 +229,7 @@ body {
   transition: background 0.12s;
 }
 .session-item:hover {
-  background: var(--bg-elevated);
+  background: var(--bg-hover);
 }
 .session-item.active {
   background: var(--accent-dim);
@@ -198,10 +245,12 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color 0.3s;
 }
 .session-time {
   font-size: 11px;
   color: var(--text-tertiary);
+  transition: color 0.3s;
 }
 
 .session-menu-btn {
@@ -217,7 +266,7 @@ body {
   font-size: 14px;
   line-height: 1;
   opacity: 0;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, background 0.15s;
 }
 .session-item:hover .session-menu-btn,
 .session-menu-btn.open {
@@ -235,7 +284,7 @@ body {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.2);
   padding: 4px;
   z-index: 20;
   min-width: 110px;
@@ -264,7 +313,7 @@ body {
   color: var(--error);
 }
 .session-menu-delete:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: rgba(239, 68, 68, 0.08);
   color: #f87171;
 }
 
@@ -299,6 +348,22 @@ body {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
+}
+
+.theme-toggle-btn {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: all 0.15s;
+}
+.theme-toggle-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-hover);
 }
 
 /* Toggle Switch */
@@ -457,6 +522,7 @@ body {
   min-width: 0;
   background: var(--bg-primary);
   position: relative;
+  transition: background 0.3s;
 }
 
 .messages-container {
@@ -481,7 +547,8 @@ body {
 }
 .empty-state-icon {
   font-size: 48px;
-  opacity: 0.6;
+  opacity: 0.5;
+  color: var(--accent);
 }
 .empty-state-title {
   font-size: 20px;
@@ -512,7 +579,7 @@ body {
   background: transparent;
 }
 .message-row.assistant:hover {
-  background: rgba(255,255,255,0.01);
+  background: var(--surface-glass);
 }
 
 .avatar {
@@ -526,6 +593,7 @@ body {
   font-weight: 600;
   flex-shrink: 0;
   user-select: none;
+  transition: background 0.3s, color 0.3s;
 }
 .avatar.user {
   background: linear-gradient(135deg, var(--accent), #8b5cf6);
@@ -549,6 +617,7 @@ body {
   line-height: 1.6;
   word-break: break-word;
   order: 1;
+  transition: background 0.3s, color 0.3s, border-color 0.3s;
 }
 
 .assistant-content {
@@ -588,6 +657,7 @@ body {
   overflow: hidden;
   font-size: 13px;
   background: var(--reasoning-bg);
+  transition: background 0.3s, border-color 0.3s;
 }
 .thinking-header {
   display: flex;
@@ -599,7 +669,7 @@ body {
   transition: background 0.1s;
 }
 .thinking-header:hover {
-  background: rgba(255,255,255,0.03);
+  background: var(--surface-glass);
 }
 .thinking-label {
   display: flex;
@@ -627,6 +697,7 @@ body {
   word-break: break-word;
   color: var(--reasoning-text);
   border: 1px solid var(--border);
+  transition: background 0.3s, color 0.3s, border-color 0.3s;
 }
 
 /* ============================================================
@@ -639,7 +710,7 @@ body {
   overflow: hidden;
   font-size: 13px;
   background: var(--bg-secondary);
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, background 0.3s;
 }
 .tool-block:hover {
   border-color: var(--border-hover);
@@ -649,7 +720,7 @@ body {
   background: var(--agent-bg);
 }
 .tool-block.agent:hover {
-  border-color: #6d28d9;
+  border-color: var(--agent-text);
 }
 
 .tool-header {
@@ -666,10 +737,10 @@ body {
   background: var(--bg-hover);
 }
 .tool-block.agent .tool-header {
-  background: rgba(76, 29, 149, 0.15);
+  background: var(--surface-glass);
 }
 .tool-block.agent .tool-header:hover {
-  background: rgba(76, 29, 149, 0.25);
+  background: rgba(76, 29, 149, 0.1);
 }
 
 .tool-label {
@@ -738,6 +809,7 @@ body {
   word-break: break-word;
   color: var(--text-secondary);
   border: 1px solid var(--border);
+  transition: background 0.3s, color 0.3s, border-color 0.3s;
 }
 
 /* Agent events */
@@ -755,6 +827,7 @@ body {
   border: 1px solid var(--reasoning-border);
   border-radius: var(--radius-sm);
   color: var(--reasoning-text);
+  transition: background 0.3s, border-color 0.3s;
 }
 .agent-event-thinking pre {
   margin: 6px 0 0;
@@ -804,6 +877,7 @@ body {
   border: 1px solid var(--research-border);
   border-radius: var(--radius-lg);
   color: var(--text-primary);
+  transition: background 0.3s, border-color 0.3s;
 }
 .research-card-header {
   display: flex;
@@ -894,7 +968,8 @@ body {
   background: rgba(34, 197, 94, 0.05);
   border: 1px solid rgba(34, 197, 94, 0.2);
   border-radius: var(--radius-lg);
-  color: #bbf7d0;
+  color: var(--text-primary);
+  transition: background 0.3s, border-color 0.3s;
 }
 .report-card-header {
   display: flex;
@@ -977,6 +1052,7 @@ body {
   border: 2px solid var(--bg-primary);
   box-shadow: 0 0 6px currentColor;
   z-index: 1;
+  transition: border-color 0.3s;
 }
 .chain-card {
   padding: 6px 12px;
@@ -1053,6 +1129,7 @@ body {
   gap: 8px;
   background: var(--bg-primary);
   border-top: 1px solid var(--border);
+  transition: background 0.3s, border-color 0.3s;
 }
 
 .input-wrapper {
@@ -1064,7 +1141,7 @@ body {
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--bg-secondary);
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.3s;
 }
 .input-wrapper:focus-within {
   border-color: var(--accent);
@@ -1157,6 +1234,14 @@ body {
     radial-gradient(ellipse at 20% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
     radial-gradient(ellipse at 80% 80%, rgba(139, 92, 246, 0.06) 0%, transparent 50%),
     var(--bg-primary);
+  transition: background 0.3s;
+}
+
+[data-theme="light"] .login-page {
+  background:
+    radial-gradient(ellipse at 20% 20%, rgba(99, 102, 241, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 80%, rgba(139, 92, 246, 0.04) 0%, transparent 50%),
+    var(--bg-primary);
 }
 
 .login-card {
@@ -1170,7 +1255,8 @@ body {
   border: 1px solid var(--border);
   width: 100%;
   max-width: 380px;
-  box-shadow: 0 24px 80px rgba(0,0,0,0.4);
+  box-shadow: 0 24px 80px rgba(0,0,0,0.2);
+  transition: background 0.3s, border-color 0.3s, box-shadow 0.3s;
 }
 
 .login-brand {
@@ -1179,19 +1265,18 @@ body {
   align-items: center;
   gap: 8px;
 }
-.login-brand-icon {
-  font-size: 40px;
-}
 .login-brand-title {
-  font-size: 22px;
+  font-size: 28px;
   font-weight: 700;
   color: var(--text-primary);
-  letter-spacing: 0.5px;
+  letter-spacing: 1px;
+  transition: color 0.3s;
 }
 .login-brand-subtitle {
   font-size: 13px;
   color: var(--text-tertiary);
   text-align: center;
+  transition: color 0.3s;
 }
 
 .login-input {
@@ -1205,7 +1290,7 @@ body {
   outline: none;
   font-family: inherit;
   box-sizing: border-box;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.3s, color 0.3s;
 }
 .login-input:focus {
   border-color: var(--accent);
@@ -1271,7 +1356,8 @@ body {
   flex-direction: column;
   z-index: 101;
   animation: slideInRight 0.25s ease;
-  box-shadow: -8px 0 40px rgba(0,0,0,0.3);
+  box-shadow: -8px 0 40px rgba(0,0,0,0.15);
+  transition: background 0.3s, border-color 0.3s;
 }
 
 .memory-drawer-header {
@@ -1286,6 +1372,7 @@ body {
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
+  transition: color 0.3s;
 }
 .memory-drawer-close {
   padding: 6px;
@@ -1361,6 +1448,7 @@ body {
   outline: none;
   box-sizing: border-box;
   min-height: 300px;
+  transition: background 0.3s, color 0.3s, border-color 0.3s;
 }
 .memory-textarea:focus {
   border-color: var(--accent);
@@ -1417,6 +1505,7 @@ body {
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg-tertiary);
+  transition: background 0.3s, border-color 0.3s;
 }
 .log-date {
   font-size: 12px;
@@ -1445,6 +1534,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  transition: background 0.3s, border-color 0.3s;
 }
 .commitment-content {
   font-size: 13px;
@@ -1566,14 +1656,16 @@ body {
   border: 1px solid var(--border);
   padding: 7px 10px;
   text-align: left;
+  transition: border-color 0.3s;
 }
 .markdown-body th {
   background: var(--bg-elevated);
   font-weight: 600;
   color: var(--text-secondary);
+  transition: background 0.3s, color 0.3s;
 }
 .markdown-body tr:nth-child(even) {
-  background: rgba(255,255,255,0.02);
+  background: var(--surface-stripe);
 }
 
 .markdown-body blockquote {
@@ -1583,6 +1675,7 @@ body {
   color: var(--text-secondary);
   background: var(--bg-secondary);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  transition: background 0.3s, color 0.3s;
 }
 .markdown-body hr {
   border: none;
@@ -1596,7 +1689,8 @@ body {
   background: var(--bg-elevated);
   padding: 2px 5px;
   border-radius: 4px;
-  color: #e0e7ff;
+  color: var(--code-text);
+  transition: background 0.3s, color 0.3s;
 }
 .markdown-body pre {
   background: var(--bg-deepest);
@@ -1606,6 +1700,7 @@ body {
   max-height: 400px;
   margin: 10px 0;
   border: 1px solid var(--border);
+  transition: background 0.3s, border-color 0.3s;
 }
 .markdown-body pre code {
   background: none;
@@ -1613,6 +1708,7 @@ body {
   color: var(--text-secondary);
   font-size: 12.5px;
   line-height: 1.6;
+  transition: color 0.3s;
 }
 
 /* ============================================================
