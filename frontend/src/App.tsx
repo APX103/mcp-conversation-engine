@@ -607,9 +607,8 @@ export default function App() {
       <div className="login-page">
         <div className="login-card">
           <div className="login-brand">
-            <div className="login-brand-icon">🧠</div>
-            <div className="login-brand-title">认知智能体平台</div>
-            <div className="login-brand-subtitle">输入身份标识以初始化认知上下文</div>
+            <div className="login-brand-title">Nexus</div>
+            <div className="login-brand-subtitle">连接智能，开启对话</div>
           </div>
           <input
             className="login-input"
@@ -642,8 +641,8 @@ export default function App() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <span className="sidebar-brand">
-            <span className="sidebar-brand-icon">🧠</span>
-            <span>CAP Engine</span>
+            <span className="sidebar-brand-icon">◈</span>
+            <span>Nexus</span>
           </span>
           <button className="btn-new-chat" onClick={() => createSession(username)}>+ 新会话</button>
         </div>
@@ -753,9 +752,9 @@ export default function App() {
         <div className="messages-container">
           {messages.length === 0 && (
             <div className="empty-state">
-              <div className="empty-state-icon">🧠</div>
-              <div className="empty-state-title">初始化认知上下文</div>
-              <div className="empty-state-subtitle">开始人机协作，探索知识的边界</div>
+              <div className="empty-state-icon">✦</div>
+              <div className="empty-state-title">开始对话</div>
+              <div className="empty-state-subtitle">提问、研究、创造 — 让 AI 为你工作</div>
             </div>
           )}
 
