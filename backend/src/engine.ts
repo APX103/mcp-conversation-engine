@@ -383,6 +383,14 @@ export class ConversationEngine {
   }
 
   stopSession(sessionId: string) {
+    // First disband any active team for this session to prevent orphan teammates
+    const teamManager = TeamManager.getInstance();
+    const activeTeam = teamManager.getTeamBySession(sessionId);
+    if (activeTeam && activeTeam.status !== "shutdown") {
+      teamManager.disbandTeam(activeTeam.teamId, "User stopped the session").catch((err) => {
+        console.error("[Engine] Failed to disband team on stop:", err);
+      });
+    }
     this.stopFlags.set(sessionId, true);
   }
 

@@ -345,12 +345,12 @@ function createTeamWaitAllTool(): ToolDef {
     name: "team_wait_all",
     description:
       "等待所有 teammate 完成各自的任务。在 spawn 完所有 teammate 后，必须调用此工具等待它们全部完成，然后收集结果返回给用户。" +
-      "此工具会阻塞直到所有 teammate 都完成（completed / error / shutdown），超时时间为 5 分钟。",
+      "此工具会阻塞直到所有 teammate 都完成（completed / error / shutdown）。默认等待 30 分钟，足够覆盖绝大多数任务。",
     parameters: [
       {
         name: "timeout_seconds",
         type: "number",
-        description: "最长等待时间（秒），默认 300",
+        description: "最长等待时间（秒），默认 1800（30 分钟）。如果任务非常耗时，可适当延长。传 0 表示不限制（不推荐）。",
         required: false,
       },
     ],
@@ -578,9 +578,9 @@ export async function executeTeamTool(
         return JSON.stringify({ error: "No active team." });
       }
       const timeoutMs =
-        typeof args.timeout_seconds === "number"
+        typeof args.timeout_seconds === "number" && args.timeout_seconds > 0
           ? args.timeout_seconds * 1000
-          : 300_000;
+          : 1_800_000; // default 30 minutes
 
       const waitResult = await manager.waitForAllTeammates(team.teamId, timeoutMs);
 
