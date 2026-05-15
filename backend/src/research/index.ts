@@ -5,7 +5,7 @@ import type { Config, ResearchStreamEvent } from "../types.js";
 import type { ResearchStatus } from "./types.js";
 import { ResearchDB } from "./db.js";
 import { saveReportHtml } from "./report.js";
-import type { ResearchPlan, SectionFinding, PipelineContext } from "./types.js";
+import type { ResearchPlan, SectionFinding, PipelineContext, SearchResult, PageContent } from "./types.js";
 import {
   decomposeQuery,
   searchQueries,
@@ -145,7 +145,17 @@ export class DeepResearchEngine {
         });
         await updateStatus("searching");
 
-        let searchResults = await searchQueries(ctx, queriesForRound);
+        // Real-time streaming search events
+        const searchGen = searchQueries(ctx, queriesForRound, currentRound);
+        let searchResults: SearchResult[] = [];
+        while (true) {
+          const { done, value } = await searchGen.next();
+          if (done) {
+            searchResults = value;
+            break;
+          }
+          yield emit(value as ResearchStreamEvent);
+        }
         yield emit({
           type: "progress",
           current: currentRound,
@@ -163,7 +173,17 @@ export class DeepResearchEngine {
         });
         await updateStatus("reading");
 
-        const pages = await readPages(ctx, searchResults);
+        // Real-time streaming page read events
+        const pageGen = readPages(ctx, searchResults);
+        let pages: PageContent[] = [];
+        while (true) {
+          const { done, value } = await pageGen.next();
+          if (done) {
+            pages = value;
+            break;
+          }
+          yield emit(value as ResearchStreamEvent);
+        }
 
         yield emit({
           type: "progress",
@@ -264,12 +284,14 @@ export class DeepResearchEngine {
       // Clean markdown code block wrapping from LLM
       html = html.replace(/^```html?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
 
+      let reportPath: string | undefined;
       if (researchDb && taskId) {
-        await saveReportHtml(researchDb, taskId, html);
+        reportPath = await saveReportHtml(researchDb, taskId, html);
+        await researchDb.updateTaskStatus(taskId, "completed", { reportPath });
       }
 
       await updateStatus("completed");
-      yield emit({ type: "report_ready", taskId });
+      yield emit({ type: "report_ready", taskId, reportPath });
     } catch (err: any) {
       await updateStatus("failed");
       yield emit({ type: "error", message: err.message });

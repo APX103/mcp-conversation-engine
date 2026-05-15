@@ -64,16 +64,22 @@ export class ResearchDB {
     return this.tasks().findOne({ _id: taskId } as any) as Promise<ResearchTaskDoc | null>;
   }
 
-  async saveReport(taskId: string, html: string): Promise<void> {
+  async saveReport(taskId: string, filePath: string): Promise<void> {
     await this.reports().insertOne({
       taskId,
-      html,
+      filePath,
       createdAt: new Date(),
     } as any);
   }
 
   async getReport(taskId: string): Promise<string | null> {
     const doc = await this.reports().findOne({ taskId } as any) as any;
-    return doc?.html ?? null;
+    return doc?.filePath ?? null;
+  }
+
+  async getLatestTaskBySession(sessionId?: string): Promise<ResearchTaskDoc | null> {
+    const query: any = {};
+    if (sessionId) query.sessionId = sessionId;
+    return this.tasks().findOne(query, { sort: { createdAt: -1 } }) as Promise<ResearchTaskDoc | null>;
   }
 }

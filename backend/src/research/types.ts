@@ -71,6 +71,7 @@ export interface ResearchTaskDoc {
   plan?: ResearchPlan;
   findings: SectionFinding[];
   currentRound: number;
+  reportPath?: string;
   createdAt: Date;
   completedAt?: Date;
   error?: string;

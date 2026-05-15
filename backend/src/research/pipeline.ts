@@ -116,15 +116,27 @@ function parseSearchResults(raw: string): SearchResult[] {
   return [];
 }
 
-export async function searchQueries(
+export type PipelineEvent =
+  | { type: "search_query"; query: string; round: number }
+  | { type: "source_found"; title: string; url: string; snippet: string }
+  | { type: "page_read"; url: string; title: string; status: "start" | "done" | "error" };
+
+export async function* searchQueries(
   ctx: PipelineContext,
-  queries: string[]
-): Promise<SearchResult[]> {
+  queries: string[],
+  round: number = 1
+): AsyncGenerator<PipelineEvent, SearchResult[]> {
   const allResults: SearchResult[] = [];
   const batchSize = 3;
 
   for (let i = 0; i < queries.length; i += batchSize) {
     const batch = queries.slice(i, i + batchSize);
+
+    // Yield search queries before executing
+    for (const q of batch) {
+      yield { type: "search_query", query: q, round };
+    }
+
     const results = await Promise.allSettled(
       batch.map(async (q) => {
         try {
@@ -140,7 +152,12 @@ export async function searchQueries(
       })
     );
     for (const r of results) {
-      if (r.status === "fulfilled") allResults.push(...r.value);
+      if (r.status === "fulfilled") {
+        for (const item of r.value) {
+          yield { type: "source_found", title: item.title, url: item.url, snippet: item.snippet };
+        }
+        allResults.push(...r.value);
+      }
     }
   }
 
@@ -154,11 +171,11 @@ function extractTitle(html: string): string {
   return match ? match[1].trim() : "";
 }
 
-export async function readPages(
+export async function* readPages(
   ctx: PipelineContext,
   results: SearchResult[],
   maxPages?: number
-): Promise<PageContent[]> {
+): AsyncGenerator<PipelineEvent, PageContent[]> {
   const limit = maxPages ?? ctx.config.maxPagesPerRound;
   const sorted = [...results]
     .filter((r) => r.url)
@@ -170,6 +187,12 @@ export async function readPages(
 
   for (let i = 0; i < sorted.length; i += batchSize) {
     const batch = sorted.slice(i, i + batchSize);
+
+    // Yield page_read start events
+    for (const r of batch) {
+      yield { type: "page_read", url: r.url, title: r.title || "", status: "start" };
+    }
+
     const results = await Promise.allSettled(
       batch.map(async (r) => {
         try {
@@ -177,22 +200,28 @@ export async function readPages(
             headers: { "User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0)" },
             signal: AbortSignal.timeout(15000),
           });
-          if (!res.ok) return null;
+          if (!res.ok) {
+            return { ok: false, url: r.url, title: r.title || "" };
+          }
           const html = await res.text();
           const text = stripHtml(html);
-          return {
-            url: r.url,
-            title: r.title || extractTitle(html),
-            text: text.slice(0, 8000),
-          };
+          const title = r.title || extractTitle(html);
+          return { ok: true, url: r.url, title, text: text.slice(0, 8000) };
         } catch (err: any) {
           console.warn(`[Research] Failed to fetch ${r.url}: ${err.message}`);
-          return null;
+          return { ok: false, url: r.url, title: r.title || "" };
         }
       })
     );
     for (const r of results) {
-      if (r.status === "fulfilled" && r.value) pages.push(r.value);
+      if (r.status === "fulfilled" && r.value) {
+        if (r.value.ok) {
+          yield { type: "page_read", url: r.value.url, title: r.value.title, status: "done" };
+          pages.push({ url: r.value.url, title: r.value.title, text: r.value.text! });
+        } else {
+          yield { type: "page_read", url: r.value.url, title: r.value.title, status: "error" };
+        }
+      }
     }
   }
 

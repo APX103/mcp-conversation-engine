@@ -41,7 +41,7 @@ interface Session {
 // ── Research Types ──
 
 interface ResearchStreamEvent {
-  type: "research_started" | "phase_changed" | "progress" | "finding" | "gap_detected" | "report_ready" | "error";
+  type: "research_started" | "phase_changed" | "progress" | "search_query" | "source_found" | "page_read" | "finding" | "gap_detected" | "report_ready" | "error";
   taskId?: string;
   title?: string;
   phase?: string;
@@ -53,6 +53,22 @@ interface ResearchStreamEvent {
   heading?: string;
   summary?: string;
   gaps?: string[];
+  query?: string;
+  round?: number;
+  url?: string;
+  snippet?: string;
+  status?: "start" | "done" | "error";
+}
+
+interface ResearchLog {
+  type: "search_query" | "source_found" | "page_read";
+  query?: string;
+  round?: number;
+  title?: string;
+  url?: string;
+  snippet?: string;
+  status?: "start" | "done" | "error";
+  timestamp: number;
 }
 
 interface ResearchState {
@@ -63,6 +79,7 @@ interface ResearchState {
   detail: string;
   progress: number;
   findings: { sectionId: number; heading: string; summary: string }[];
+  logs: ResearchLog[];
   completed: boolean;
   error: string;
 }
@@ -150,7 +167,171 @@ function ChevronIcon({ open }: { open: boolean }) {
   );
 }
 
+// ── AgentBlock: Subagent 只读展示 ──
+
+interface SubagentEvent {
+  type: string;
+  content?: string;
+  id?: string;
+  name?: string;
+  arguments?: Record<string, unknown>;
+  arguments_delta?: string;
+  result?: string;
+  message?: string;
+}
+
+function AgentBlock({ tc }: { tc: ToolCallItem }) {
+  const [open, setOpen] = useState(false);
+  const [events, setEvents] = useState<SubagentEvent[]>([]);
+  const [completed, setCompleted] = useState(false);
+  const [error, setError] = useState("");
+  const preview = argPreview(tc.arguments);
+
+  // Parse subagentId from result
+  let subagentId = "";
+  let task = preview;
+  try {
+    const result = JSON.parse(tc.result || "{}");
+    subagentId = result.subagentId || "";
+    task = tc.arguments?.task as string || preview;
+  } catch {
+    // ignore
+  }
+
+  useEffect(() => {
+    if (!subagentId || !open) return;
+
+    const controller = new AbortController();
+    fetch(`${API_BASE}/api/subagent/${encodeURIComponent(subagentId)}/stream`, {
+      signal: controller.signal,
+    }).then(async (res) => {
+      if (!res.ok || !res.body) return;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event: SubagentEvent = JSON.parse(line.slice(6));
+            setEvents((prev) => [...prev, event]);
+            if (event.type === "subagent_completed") setCompleted(true);
+            if (event.type === "error") setError(event.message || "失败");
+          } catch {}
+        }
+      }
+    }).catch(() => {});
+
+    return () => controller.abort();
+  }, [subagentId, open]);
+
+  return (
+    <div style={{ ...styles.toolBlock, borderColor: "#7c3aed" }}>
+      <div style={styles.toolRow} onClick={() => setOpen(!open)}>
+        <span style={{ color: completed ? "#16a34a" : "#7c3aed" }}>
+          {completed ? <CheckIcon /> : <Spinner />}
+        </span>
+        <ChevronIcon open={open} />
+        <span style={styles.toolLabel}>
+          <span style={{ ...styles.toolNameText, color: "#c4b5fd" }}>🔧 spawn_agent</span>
+          <span style={styles.toolPreview}>{task}</span>
+          {!completed && <span style={{ ...styles.toolRunning, color: "#a78bfa" }}>running...</span>}
+        </span>
+      </div>
+
+      {open && (
+        <div style={styles.toolDetails}>
+          {/* Arguments */}
+          <div style={styles.detailSection}>
+            <div style={styles.detailLabel}>Task</div>
+            <pre style={styles.codeBlock}>{JSON.stringify(tc.arguments, null, 2)}</pre>
+          </div>
+
+          {/* Subagent execution log */}
+          {events.length > 0 && (
+            <div style={styles.detailSection}>
+              <div style={styles.detailLabel}>执行过程（只读）</div>
+              <div style={{ maxHeight: "300px", overflowY: "auto", fontSize: "12px" }}>
+                {events.map((ev, i) => {
+                  if (ev.type === "reasoning" && ev.content) {
+                    return (
+                      <div key={i} style={{ marginBottom: "6px", padding: "6px", background: "#fffbeb", borderRadius: "4px", color: "#92400e" }}>
+                        <strong>💭 Thinking</strong>
+                        <pre style={{ margin: "4px 0 0", whiteSpace: "pre-wrap", fontSize: "11px" }}>{ev.content}</pre>
+                      </div>
+                    );
+                  }
+                  if (ev.type === "text" && ev.content) {
+                    return (
+                      <div key={i} style={{ marginBottom: "4px", color: "#e0e7ff" }}>
+                        {ev.content}
+                      </div>
+                    );
+                  }
+                  if (ev.type === "tool_call_end" && ev.name) {
+                    return (
+                      <div key={i} style={{ marginBottom: "4px", paddingLeft: "12px", color: "#a5b4fc" }}>
+                        <span style={{ color: "#60a5fa" }}>🔧</span> {displayName(ev.name)} {argPreview(ev.arguments || {})}
+                      </div>
+                    );
+                  }
+                  if (ev.type === "tool_result") {
+                    return (
+                      <div key={i} style={{ marginBottom: "4px", paddingLeft: "24px", color: "#34d399", fontSize: "11px" }}>
+                        ↳ {ev.result?.slice(0, 100)}{ev.result && ev.result.length > 100 ? "..." : ""}
+                      </div>
+                    );
+                  }
+                  if (ev.type === "subagent_completed") {
+                    return (
+                      <div key={i} style={{ marginBottom: "6px", padding: "6px", background: "#052e16", borderRadius: "4px", color: "#86efac" }}>
+                        ✅ 子 agent 已完成
+                      </div>
+                    );
+                  }
+                  if (ev.type === "error") {
+                    return (
+                      <div key={i} style={{ marginBottom: "6px", padding: "6px", background: "#450a0a", borderRadius: "4px", color: "#fca5a5" }}>
+                        ❌ {ev.message}
+                      </div>
+                    );
+                  }
+                  return null;
+                })}
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div style={{ ...styles.detailSection, color: "#f87171" }}>
+              ❌ {error}
+            </div>
+          )}
+
+          {tc.result && !tc.running && (
+            <div style={styles.detailSection}>
+              <div style={styles.detailLabel}>Result</div>
+              <pre style={styles.codeBlock}>{tc.result}</pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ToolCallBlock({ tc }: { tc: ToolCallItem }) {
+  // spawn_agent 使用特殊的 AgentBlock 展示
+  if (tc.name === "spawn_agent" || tc.name === "mcp__spawn_agent") {
+    return <AgentBlock tc={tc} />;
+  }
+
   const [open, setOpen] = useState(false);
   const shortName = displayName(tc.name);
   const preview = argPreview(tc.arguments);
@@ -212,6 +393,167 @@ function ToolCallBlock({ tc }: { tc: ToolCallItem }) {
   );
 }
 
+function ResearchChain({ logs }: { logs: ResearchLog[] }) {
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  const toggle = (i: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+
+  // 合并 page_read 的 start/done：用 map 记录最新的状态
+  const pageReadMap = new Map<string, ResearchLog>();
+  for (const log of logs) {
+    if (log.type === "page_read" && log.url) {
+      pageReadMap.set(log.url, log);
+    }
+  }
+
+  // 过滤：只保留最终的 page_read 状态（done/error），去掉中间的 start
+  const displayLogs = logs.filter((log) => {
+    if (log.type !== "page_read") return true;
+    if (!log.url) return true;
+    const latest = pageReadMap.get(log.url);
+    return latest === log; // 只保留最新的一条
+  });
+
+  const getNodeStyle = (type: ResearchLog["type"]) => {
+    switch (type) {
+      case "search_query":
+        return { icon: "🔍", color: "#60a5fa", bg: "#1e3a5f", border: "#60a5fa30" };
+      case "source_found":
+        return { icon: "↳", color: "#34d399", bg: "#1a3a2f", border: "#34d39930" };
+      case "page_read":
+        return { icon: "📄", color: "#fbbf24", bg: "#3a3010", border: "#fbbf2430" };
+      default:
+        return { icon: "•", color: "#a5b4fc", bg: "#1e1b4b", border: "#a5b4fc30" };
+    }
+  };
+
+  const getHostname = (url?: string) => {
+    if (!url) return "";
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return url;
+    }
+  };
+
+  return (
+    <div style={{ position: "relative", paddingLeft: "28px", maxHeight: "360px", overflowY: "auto" }}>
+      {/* 垂直连接线 */}
+      <div
+        style={{
+          position: "absolute",
+          left: "11px",
+          top: "6px",
+          bottom: "6px",
+          width: "2px",
+          background: "linear-gradient(180deg, #4338ca 0%, #6366f1 50%, #4338ca 100%)",
+          borderRadius: "1px",
+          opacity: 0.6,
+        }}
+      />
+
+      {displayLogs.map((log, i) => {
+        const isLast = i === displayLogs.length - 1;
+        const isExpanded = expanded.has(i);
+        const style = getNodeStyle(log.type);
+
+        return (
+          <div key={i} style={{ position: "relative", marginBottom: isLast ? 0 : "6px" }}>
+            {/* 节点圆点 */}
+            <div
+              style={{
+                position: "absolute",
+                left: "-22px",
+                top: "5px",
+                width: "12px",
+                height: "12px",
+                borderRadius: "50%",
+                background: style.color,
+                border: "2px solid #1e1b4b",
+                boxShadow: `0 0 4px ${style.color}60`,
+                zIndex: 1,
+              }}
+            />
+
+            {/* 节点卡片 */}
+            <div
+              onClick={() => log.type === "source_found" && toggle(i)}
+              style={{
+                padding: "5px 10px",
+                background: style.bg,
+                borderRadius: "6px",
+                border: `1px solid ${style.border}`,
+                cursor: log.type === "source_found" ? "pointer" : "default",
+                transition: "all 0.15s",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", lineHeight: "1.5" }}>
+                <span style={{ fontSize: "11px" }}>{style.icon}</span>
+                {log.type === "search_query" && (
+                  <span>
+                    <span style={{ color: "#e0e7ff" }}>搜索</span>
+                    <span style={{ color: "#a5b4fc", marginLeft: "4px" }}>{log.query}</span>
+                    {log.round && log.round > 1 && (
+                      <span style={{ color: "#818cf8", marginLeft: "4px", fontSize: "11px" }}>
+                        (第{log.round}轮)
+                      </span>
+                    )}
+                  </span>
+                )}
+                {log.type === "source_found" && (
+                  <span>
+                    <span style={{ color: "#e0e7ff" }}>找到</span>
+                    <span style={{ color: "#a5b4fc", marginLeft: "4px" }}>{log.title || "未知网页"}</span>
+                  </span>
+                )}
+                {log.type === "page_read" && (
+                  <span>
+                    <span style={{ color: "#e0e7ff" }}>
+                      {log.status === "done" ? "已读" : log.status === "error" ? "失败" : "阅读"}
+                    </span>
+                    <span style={{ color: "#a5b4fc", marginLeft: "4px" }}>{log.title || log.url}</span>
+                  </span>
+                )}
+              </div>
+
+              {/* source_found 展开的 snippet */}
+              {log.type === "source_found" && isExpanded && log.snippet && (
+                <div
+                  style={{
+                    marginTop: "6px",
+                    paddingTop: "6px",
+                    borderTop: `1px solid ${style.border}`,
+                    color: "#a5b4fc",
+                    fontSize: "11px",
+                    lineHeight: "1.5",
+                  }}
+                >
+                  {log.snippet.slice(0, 150)}
+                  {log.snippet.length > 150 ? "..." : ""}
+                </div>
+              )}
+
+              {/* URL hostname */}
+              {log.type === "source_found" && log.url && (
+                <div style={{ marginTop: "3px", fontSize: "11px", color: "#6366f1" }}>
+                  {getHostname(log.url)}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ReasoningBlock({ content }: { content: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -268,8 +610,9 @@ export default function App() {
   const [deepResearchMode, setDeepResearchMode] = useState(false);
   const [researchState, setResearchState] = useState<ResearchState>({
     active: false, taskId: "", title: "", phase: "", detail: "",
-    progress: 0, findings: [], completed: false, error: "",
+    progress: 0, findings: [], logs: [], completed: false, error: "",
   });
+  const [researchSaved, setResearchSaved] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -342,6 +685,12 @@ export default function App() {
   const switchSession = async (sessionId: string) => {
     setCurrentSessionId(sessionId);
     setMessages([]);
+    // 重置研究状态，避免切换到新会话时显示旧的研究卡片
+    setResearchState({
+      active: false, taskId: "", title: "", phase: "", detail: "",
+      progress: 0, findings: [], logs: [], completed: false, error: "",
+    });
+    setResearchSaved(false);
     try {
       const res = await fetch(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}`, {
         cache: "no-store",
@@ -354,6 +703,45 @@ export default function App() {
       const data = await res.json();
       const history = convertHistory(data.messages || []);
       setMessages(history);
+
+      // 恢复该会话的研究任务状态
+      try {
+        const researchRes = await fetch(`${API_BASE}/api/research?sessionId=${encodeURIComponent(sessionId)}`);
+        const task = await researchRes.json();
+        if (task) {
+          if (task.status === "completed" && task.hasReport) {
+            setResearchState({
+              active: true,
+              taskId: task._id || "",
+              title: task.query || "",
+              phase: "completed",
+              detail: "",
+              progress: 100,
+              findings: task.findings || [],
+              logs: [],
+              completed: true,
+              error: "",
+            });
+          } else if (task.status === "failed") {
+            setResearchState({
+              active: true,
+              taskId: task._id || "",
+              title: task.query || "",
+              phase: "failed",
+              detail: "",
+              progress: 0,
+              findings: task.findings || [],
+              logs: [],
+              completed: false,
+              error: task.error || "研究失败",
+            });
+          }
+          // 对于进行中的任务 (pending/searching/reading 等)，不恢复 active 状态
+          // 因为 SSE 连接已断开，无法继续流式更新
+        }
+      } catch (researchErr) {
+        console.error("Failed to restore research state:", researchErr);
+      }
     } catch (err) {
       console.error("switchSession failed:", err);
       setMessages([]);
@@ -647,14 +1035,14 @@ export default function App() {
   const startResearch = useCallback(async (query: string) => {
     setResearchState({
       active: true, taskId: "", title: query, phase: "starting", detail: "",
-      progress: 0, findings: [], completed: false, error: "",
+      progress: 0, findings: [], logs: [], completed: false, error: "",
     });
 
     try {
-      const res = await fetch("/api/research", {
+      const res = await fetch(`${API_BASE}/api/research`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, sessionId: currentSessionId }),
+        body: JSON.stringify({ query, sessionId: currentSessionId, userId: username }),
       });
 
       if (!res.ok || !res.body) throw new Error("Failed to start research");
@@ -696,6 +1084,32 @@ export default function App() {
                     sectionId: event.sectionId || 0,
                     heading: event.heading || "",
                     summary: event.summary || "",
+                  }];
+                  break;
+                case "search_query":
+                  next.logs = [...(prev.logs || []), {
+                    type: "search_query",
+                    query: event.query,
+                    round: event.round,
+                    timestamp: Date.now(),
+                  }];
+                  break;
+                case "source_found":
+                  next.logs = [...(prev.logs || []), {
+                    type: "source_found",
+                    title: event.title,
+                    url: event.url,
+                    snippet: event.snippet,
+                    timestamp: Date.now(),
+                  }];
+                  break;
+                case "page_read":
+                  next.logs = [...(prev.logs || []), {
+                    type: "page_read",
+                    url: event.url,
+                    title: event.title,
+                    status: event.status,
+                    timestamp: Date.now(),
                   }];
                   break;
                 case "gap_detected":
@@ -1220,6 +1634,17 @@ export default function App() {
               <div style={{ fontSize: "13px", color: "#c7d2fe" }}>
                 {researchState.detail || researchState.phase || "准备中..."}
               </div>
+
+              {/* Research Chain Timeline */}
+              {researchState.logs.length > 0 && (
+                <div style={{ marginTop: "12px", borderTop: "1px solid #312e81", paddingTop: "12px" }}>
+                  <div style={{ fontSize: "12px", color: "#818cf8", marginBottom: "10px" }}>
+                    研究链条
+                  </div>
+                  <ResearchChain logs={researchState.logs} />
+                </div>
+              )}
+
               {researchState.findings.length > 0 && (
                 <div style={{ marginTop: "12px", borderTop: "1px solid #312e81", paddingTop: "12px" }}>
                   <div style={{ fontSize: "12px", color: "#818cf8", marginBottom: "8px" }}>
@@ -1258,18 +1683,51 @@ export default function App() {
                 <span style={{ fontSize: "18px" }}>📊</span>
                 <strong>调研报告已生成</strong>
               </div>
-              <a
-                href={`/api/research/${researchState.taskId}/report`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: "inline-block", padding: "8px 20px",
-                  background: "#16a34a", color: "#fff",
-                  borderRadius: "8px", textDecoration: "none", fontSize: "14px",
-                }}
-              >
-                查看报告 →
-              </a>
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                <a
+                  href={`${API_BASE}/api/research/${researchState.taskId}/report`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: "inline-block", padding: "8px 20px",
+                    background: "#16a34a", color: "#fff",
+                    borderRadius: "8px", textDecoration: "none", fontSize: "14px",
+                  }}
+                >
+                  查看报告 →
+                </a>
+                <button
+                  onClick={async () => {
+                    if (!username || !researchState.taskId) return;
+                    try {
+                      const res = await fetch(`${API_BASE}/api/research/${researchState.taskId}/save-as-skill`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ userId: username }),
+                      });
+                      const data = await res.json();
+                      if (data.success) {
+                        setResearchSaved(true);
+                        alert(`已保存为 Skill: ${data.skillName}`);
+                        loadSkills();
+                      } else {
+                        alert("保存失败: " + (data.error || "未知错误"));
+                      }
+                    } catch (err: any) {
+                      alert("保存失败: " + err.message);
+                    }
+                  }}
+                  disabled={researchSaved}
+                  style={{
+                    display: "inline-block", padding: "8px 20px",
+                    background: researchSaved ? "#374151" : "#3b82f6",
+                    color: "#fff", border: "none",
+                    borderRadius: "8px", fontSize: "14px", cursor: researchSaved ? "default" : "pointer",
+                  }}
+                >
+                  {researchSaved ? "✓ 已保存为 Skill" : "💾 保存为 Skill"}
+                </button>
+              </div>
             </div>
           )}
         </div>

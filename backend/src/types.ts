@@ -51,9 +51,12 @@ export type ResearchStreamEvent =
   | { type: "research_started"; taskId: string; title: string }
   | { type: "phase_changed"; phase: string; detail: string }
   | { type: "progress"; current: number; total: number; message: string }
+  | { type: "search_query"; query: string; round: number }
+  | { type: "source_found"; title: string; url: string; snippet: string }
+  | { type: "page_read"; url: string; title: string; status: "start" | "done" | "error" }
   | { type: "finding"; sectionId: number; heading: string; summary: string }
   | { type: "gap_detected"; gaps: string[] }
-  | { type: "report_ready"; taskId: string }
+  | { type: "report_ready"; taskId: string; reportPath?: string }
   | { type: "error"; message: string };
 
 // ── Config ──
