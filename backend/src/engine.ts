@@ -177,13 +177,18 @@ export class ConversationEngine {
         subagentBus.emit(subagentId, event);
       }
       const doc = await subagentDb.get(subagentId);
-      const result = doc?.result || "无结果";
+      let result = doc?.result;
+      // Fallback: if DB result is empty, extract from the last assistant message
+      if (!result && doc?.messages) {
+        const lastAssistant = [...doc.messages].reverse().find((m) => m.role === "assistant");
+        result = lastAssistant?.content || lastAssistant?.reasoning_content || "";
+      }
       return JSON.stringify({
         subagentId,
         status: "completed",
         mode: "sync",
-        result,
-        message: `子 agent 已完成任务。结果：\n${result}`,
+        result: result || "无结果",
+        message: `子 agent 已完成任务。结果：\n${result || "无结果"}`,
       });
     } catch (err: any) {
       await subagentDb.fail(subagentId, err.message);
