@@ -22,6 +22,15 @@
       "command": "node",
       "args": ["./example-mcp-server/index.js"],
       "transport": "stdio"
+    },
+    "agentrun": {
+      "transport": "stdio",
+      "command": "node",
+      "args": ["/path/to/agentrun-mcp-server/dist/index.js"],
+      "env": {
+        "AGENTRUN_CONFIG": "/path/to/agentrun-mcp-server/config.json"
+      },
+      "description": "阿里云 AgentRun Code Interpreter - 执行 Python/JavaScript 代码"
     }
   },
   "server": {
