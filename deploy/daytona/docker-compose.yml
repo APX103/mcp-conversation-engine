@@ -1,0 +1,68 @@
+services:
+  mongodb:
+    image: mongo:8.3.1-noble
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8.8-alpine
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  daytona-mcp:
+    build:
+      context: ./daytona-mcp-sidecar
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - DAYTONA_API_URL=${DAYTONA_API_URL:-http://10.1.52.70:3080/api}
+      - DAYTONA_TOOLBOX_URL=${DAYTONA_TOOLBOX_URL:-http://10.1.52.70:4000/toolbox}
+      - DAYTONA_API_KEY=${DAYTONA_API_KEY:-daytona_test_key_12345678901234567890}
+      - PORT=3100
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3100/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ../../backend
+    restart: unless-stopped
+    environment:
+      - MAX_TOOL_ROUNDS=100
+    ports:
+      - "3000:3000"
+      - "9990-9999:9990-9999"
+    volumes:
+      - ./config.json:/config.json:ro
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      daytona-mcp:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../../frontend
+      args:
+        VITE_API_BASE: "http://localhost:3000"
+    ports:
+      - "5174:80"
+    depends_on:
+      - backend
+
+volumes:
+  mongo-data:
+  redis-data:

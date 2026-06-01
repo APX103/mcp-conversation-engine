@@ -1,5 +1,6 @@
 import type { ToolDef } from "./types.js";
 import type { DbManager } from "./db.js";
+import type { ServiceManager } from "./services/manager.js";
 import { parseSkillMarkdown } from "./skill.js";
 import { readFile, writeFile, readdir, mkdir, stat } from "fs/promises";
 import { resolve, relative, dirname, join } from "path";
@@ -313,11 +314,110 @@ function createSkillDelete(db: DbManager): ToolDef {
   };
 }
 
+// ── Dynamic service management ──
+
+function createServiceCreate(sm: ServiceManager): ToolDef {
+  return {
+    name: "create_service",
+    description:
+      "Create and start a dynamic Node.js HTTP service. " +
+      "The service runs as a child process with an assigned port. " +
+      "Use process.env.SERVICE_PORT to get the assigned port in your code. " +
+      "Returns the service ID, port, and URL.",
+    parameters: [
+      { name: "name", type: "string", description: "Service name (must be unique)", required: true },
+      { name: "code", type: "string", description: "Node.js ESM code to run. Use process.env.SERVICE_PORT for the assigned port.", required: true },
+    ],
+    async execute(args) {
+      try {
+        const info = await sm.createService(args.code as string, { name: args.name as string });
+        return `Service created:\n  ID: ${info.id}\n  Port: ${info.port}\n  Status: ${info.status}\n  URL (container): http://0.0.0.0:${info.port}\n  URL (host): http://host.docker.internal:${info.port}`;
+      } catch (err: any) {
+        return `Error: ${err.message}`;
+      }
+    },
+  };
+}
+
+function createServiceList(sm: ServiceManager): ToolDef {
+  return {
+    name: "list_services",
+    description: "List all running dynamic services and their ports. Also shows available ports in the pool.",
+    parameters: [],
+    async execute() {
+      const services = sm.listServices();
+      if (services.length === 0) {
+        const ports = sm.getAvailablePorts();
+        return `No services running.\nAvailable port pool: ${ports.start}-${ports.end} (${ports.available.length} free)`;
+      }
+      const lines = services.map(
+        (s) => `  ${s.id}: port=${s.port} status=${s.status} pid=${s.pid ?? "-"} started=${s.startedAt ?? "-"}`
+      );
+      const ports = sm.getAvailablePorts();
+      return `Running services (${services.length}):\n${lines.join("\n")}\n\nAvailable ports: ${ports.available.join(", ") || "none"} (${ports.available.length}/${ports.available.length + services.length})`;
+    },
+  };
+}
+
+function createServiceStop(sm: ServiceManager): ToolDef {
+  return {
+    name: "stop_service",
+    description: "Stop a running dynamic service by ID.",
+    parameters: [
+      { name: "id", type: "string", description: "Service ID to stop", required: true },
+    ],
+    async execute(args) {
+      const ok = sm.stopService(args.id as string);
+      return ok ? `Service "${args.id}" stopped.` : `Service "${args.id}" not found.`;
+    },
+  };
+}
+
+function createServiceLogs(sm: ServiceManager): ToolDef {
+  return {
+    name: "service_logs",
+    description: "Get recent logs from a dynamic service.",
+    parameters: [
+      { name: "id", type: "string", description: "Service ID", required: true },
+      { name: "tail", type: "number", description: "Number of log lines to return (default 30)", required: false },
+    ],
+    async execute(args) {
+      const logs = sm.getServiceLogs(args.id as string, (args.tail as number) || 30);
+      if (logs.length === 0) return `No logs for "${args.id}".`;
+      return logs.join("\n");
+    },
+  };
+}
+
+// ── deep_research: 启动深度研究任务 ──
+
+function createDeepResearch(): ToolDef {
+  return {
+    name: "deep_research",
+    description:
+      "对复杂问题启动深度研究任务。系统将自动搜索多个信息源、阅读网页、综合发现并生成 HTML 调研报告。" +
+      "适用于需要跨多个信息源综合分析的问题，如市场调研、技术分析、竞品对比等。" +
+      "研究在后台运行，用户可以继续对话。" +
+      "调用此工具后，告诉用户'已启动深度研究任务，完成后可查看报告'。",
+    parameters: [
+      { name: "query", type: "string", description: "研究主题或问题", required: true },
+    ],
+    async execute(args, _userId?) {
+      return JSON.stringify({
+        action: "start_research",
+        query: args.query,
+        message: `深度研究任务已启动，主题：${args.query}。研究将在后台进行，完成后会通知用户查看报告。`,
+      });
+    },
+  };
+}
+
 // ── Export ──
 
 export function createBuiltinTools(opts: {
   getToolSchemas: (namePattern: string) => ToolDef[];
   db?: DbManager;
+  serviceManager?: ServiceManager;
   mode?: "blacklist" | "whitelist";
   disabled?: string[];
   enabled?: string[];
@@ -329,6 +429,7 @@ export function createBuiltinTools(opts: {
     createWriteFile(),
     createEditFile(),
     createFetchUrl(),
+    createDeepResearch(),
   ];
 
   if (opts.db) {
@@ -337,6 +438,15 @@ export function createBuiltinTools(opts: {
       createSkillCreate(opts.db),
       createSkillUpdate(opts.db),
       createSkillDelete(opts.db)
+    );
+  }
+
+  if (opts.serviceManager) {
+    all.push(
+      createServiceCreate(opts.serviceManager),
+      createServiceList(opts.serviceManager),
+      createServiceStop(opts.serviceManager),
+      createServiceLogs(opts.serviceManager)
     );
   }
 

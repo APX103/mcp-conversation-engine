@@ -1,0 +1,36 @@
+{
+  "name": "agentrun-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP Server for Alibaba Cloud AgentRun Code Interpreter",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "agentrun-mcp-server": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start:http": "node dist/server.js",
+    "test": "node --test",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "agentrun",
+    "code-interpreter",
+    "alibaba-cloud"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^20.17.9",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

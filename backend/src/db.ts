@@ -59,6 +59,10 @@ export class DbManager {
     console.log(`MongoDB connected to ${this.dbName}`);
   }
 
+  collection(name: string) {
+    return this.client.db(this.dbName).collection(name);
+  }
+
   // ── Sessions ──
 
   async createSession(userId: string, title = "New Chat"): Promise<string> {

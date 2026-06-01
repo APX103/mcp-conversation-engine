@@ -1,14 +1,21 @@
 import OpenAI from "openai";
 import type { Config, ChatMessage, StreamEvent, ToolDef, ToolCall } from "./types.js";
 import { createBuiltinTools } from "./tools.js";
+import { createTeamTools, executeTeamTool } from "./team/tools.js";
+import { TeamManager } from "./team/manager.js";
+import { TeammateEngine } from "./team/engine.js";
+import { SubagentDB } from "./subagent/db.js";
+import { ServiceManager } from "./services/manager.js";
 import { McpManager } from "./mcp.js";
 import type { DbManager } from "./db.js";
 import { buildApiMessages, compressMessages } from "./context.js";
 import { MemoryEngine } from "./memory.js";
 import { SkillEngine } from "./skill.js";
 import type { CognitiveAdapter } from './cognitive/adapter.js';
+import { SubagentEngine } from "./subagent/engine.js";
+import { subagentBus } from "./subagent/bus.js";
 
-const MAX_TOOL_ROUNDS = 10;
+const MAX_TOOL_ROUNDS = parseInt(process.env.MAX_TOOL_ROUNDS || "100", 10);
 
 function toolDefToOpenAI(tool: ToolDef): OpenAI.ChatCompletionTool {
   const properties: Record<string, any> = {};
@@ -53,8 +60,11 @@ export class ConversationEngine {
   private memory?: MemoryEngine;
   private skill?: SkillEngine;
   private cognitiveAdapter?: CognitiveAdapter;
+  private serviceManager: ServiceManager;
+  private config: Config;
 
   constructor(config: Config, mcp: McpManager, db?: DbManager, memory?: MemoryEngine, skill?: SkillEngine, cognitiveAdapter?: CognitiveAdapter) {
+    this.config = config;
     this.openai = new OpenAI({
       baseURL: config.llm.baseUrl,
       apiKey: config.llm.apiKey,
@@ -67,24 +77,247 @@ export class ConversationEngine {
     this.memory = memory;
     this.skill = skill;
     this.cognitiveAdapter = cognitiveAdapter;
-
-    // Monkey-patch allTools to close over current state
-    (this as any)._allTools = () => {
-      return [
-        ...createBuiltinTools({
-          getToolSchemas: (pattern) => this.mcp.getFullTools(pattern),
-          db: this.db,
-          mode: config.builtinTools?.mode,
-          disabled: config.builtinTools?.disabled,
-          enabled: config.builtinTools?.enabled,
-        }),
-        ...this.mcp.getAllTools(),
-      ];
-    };
+    this.serviceManager = new ServiceManager();
   }
 
-  private getTools(): ToolDef[] {
-    return (this as any)._allTools();
+  // 基础工具列表（不含 spawn_agent，用于子 agent）
+  private getBaseTools(): ToolDef[] {
+    return [
+      ...createBuiltinTools({
+        getToolSchemas: (pattern) => this.mcp.getFullTools(pattern),
+        db: this.db,
+        serviceManager: this.serviceManager,
+        mode: this.config.builtinTools?.mode,
+        disabled: this.config.builtinTools?.disabled,
+        enabled: this.config.builtinTools?.enabled,
+      }),
+      ...this.mcp.getAllTools(),
+    ];
+  }
+
+  // 完整工具列表（含 spawn_agent 和 team 工具）
+  private getTools(sessionId: string): ToolDef[] {
+    const tools = this.getBaseTools();
+
+    // 动态注入 spawn_agent
+    tools.push({
+      name: "spawn_agent",
+      description:
+        "启动一个子 agent（Subagent）来执行特定任务。子 agent 拥有独立的上下文和完整的工具访问权限，可以自主调用工具完成复杂子任务。任务完成后返回结果给父 agent。" +
+        "适用于：1) 需要多步骤独立执行的复杂子任务；2) 需要并行处理的任务；3) 需要隔离上下文的探索性任务。" +
+        "注意：如需多 agent 协作通信，请使用 team_create + team_spawn_teammate。",
+      parameters: [
+        { name: "task", type: "string", description: "子 agent 需要完成的具体任务描述，要尽可能详细和明确，包括目标、约束条件和期望的输出格式", required: true },
+        { name: "context", type: "string", description: "可选的上下文信息。如果需要子 agent 了解父对话中的某些信息（如已确认的结论、相关文件路径等），可以在这里提供摘要", required: false },
+        { name: "mode", type: "string", description: "执行模式: 'sync'（同步等待结果，默认）| 'async'（后台运行，结果稍后返回）", required: false },
+      ],
+      execute: async (args) => this.spawnSubagent(args),
+    });
+
+    // 注入 team 工具（绑定当前 sessionId）
+    const teamToolDefs = createTeamTools();
+    for (const t of teamToolDefs) {
+      if (t.name === "team_spawn_teammate") {
+        // Special handling: needs to start the engine after creating the teammate record
+        tools.push({
+          ...t,
+          execute: async (args, _userId) => this.spawnTeammate(args, sessionId),
+        });
+      } else {
+        tools.push({
+          ...t,
+          execute: async (args, _userId) => executeTeamTool(t.name, args, sessionId),
+        });
+      }
+    }
+
+    return tools;
+  }
+
+  private async spawnTeammate(
+    args: Record<string, unknown>,
+    sessionId: string
+  ): Promise<string> {
+    if (!this.db) {
+      return JSON.stringify({ error: "Database not available" });
+    }
+
+    const manager = TeamManager.getInstance();
+    const team = manager.getTeamBySession(sessionId);
+    if (!team) {
+      return JSON.stringify({ error: "No active team. Call team_create first." });
+    }
+
+    try {
+      // 1. Create teammate record
+      const teammate = manager.spawnTeammate(team.teamId, {
+        name: args.name as string,
+        color: (args.color as string) || undefined,
+        initialTask: args.task as string,
+        model: (args.model as string) || undefined,
+      });
+
+      // 2. Prepare tools (same as subagent — base tools + MCP execute injection)
+      const childTools = this.getBaseTools()
+        .filter((t) => t.name !== "spawn_agent" && !t.name.startsWith("team_"))
+        .map((t) => {
+          if (t.name.startsWith("mcp__") && !t.execute) {
+            return {
+              ...t,
+              execute: async (a: Record<string, unknown>, _userId?: string) => {
+                return this.mcp.executeTool(t.name, a, _userId);
+              },
+            };
+          }
+          return t;
+        });
+
+      // 3. Pre-create subagent record and get its MongoDB _id
+      const subagentDb = new SubagentDB(this.db);
+      const subagentId = await subagentDb.create({
+        parentSessionId: sessionId,
+        parentToolCallId: "",
+        task: args.task as string,
+        context: "",
+        status: "running",
+        messages: [],
+        result: "",
+      });
+
+      // 4. Start TeammateEngine in background (async)
+      const teammateEngine = new TeammateEngine(
+        this.config,
+        subagentDb,
+        team.teamId,
+        teammate.agentId,
+        subagentId,
+        teammate.name
+      );
+
+      (async () => {
+        console.log(`[Teammate] Starting ${teammate.agentId} with task: ${(args.task as string).slice(0, 80)}...`);
+        try {
+          for await (const event of teammateEngine.run(args.task as string, childTools)) {
+            manager.emit(team.teamId, {
+              type: "teammate_event",
+              agentId: teammate.agentId,
+              event,
+            });
+          }
+          console.log(`[Teammate] ${teammate.agentId} finished successfully`);
+        } catch (err: any) {
+          console.error(`[Teammate] ${teammate.agentId} run failed:`, err);
+          manager.updateTeammateStatus(team.teamId, teammate.agentId, "error");
+          manager.emit(team.teamId, {
+            type: "error",
+            agentId: teammate.agentId,
+            message: err.message,
+          });
+        }
+      })();
+
+      return JSON.stringify({
+        agentId: teammate.agentId,
+        name: teammate.name,
+        color: teammate.color,
+        status: teammate.status,
+        message: `Teammate "${teammate.name}" (${teammate.color}) 已启动。任务: ${args.task}`,
+      });
+    } catch (err: any) {
+      return JSON.stringify({ error: err.message });
+    }
+  }
+
+  private async spawnSubagent(args: Record<string, unknown>): Promise<string> {
+    const task = args.task as string;
+    const context = (args.context as string) || undefined;
+    const mode = (args.mode as string) || "sync";
+
+    if (!this.db) {
+      return JSON.stringify({ error: "Database not available" });
+    }
+
+    const subagentDb = new SubagentDB(this.db);
+    const subagentEngine = new SubagentEngine(this.config, subagentDb);
+
+    const subagentId = await subagentDb.create({
+      parentSessionId: "", // 会在 run 时由调用方填入
+      parentToolCallId: "",
+      task,
+      context: context || "",
+      status: "running",
+      messages: [],
+      result: "",
+    });
+
+    // MCP tools from getBaseTools don't have execute() — they rely on McpManager.toolExecuteMap.
+    // SubagentEngine runs standalone and only has the tools array, so we must inject execute()
+    // for every MCP tool before passing them to the subagent.
+    const childTools = this.getBaseTools()
+      .filter((t) => t.name !== "spawn_agent")
+      .map((t) => {
+        if (t.name.startsWith("mcp__") && !t.execute) {
+          return {
+            ...t,
+            execute: async (args: Record<string, unknown>, _userId?: string) => {
+              return this.mcp.executeTool(t.name, args, _userId);
+            },
+          };
+        }
+        return t;
+      });
+
+    if (mode === "async") {
+      // 异步模式：后台运行，事件推送到 bus，立即返回
+      (async () => {
+        try {
+          for await (const event of subagentEngine.run(subagentId, task, childTools, context)) {
+            subagentBus.emit(subagentId, event);
+          }
+        } catch (err: any) {
+          console.error("[Subagent] Async run failed:", err);
+          await subagentDb.fail(subagentId, err.message);
+          subagentBus.emit(subagentId, { type: "error", message: err.message });
+        }
+      })();
+      return JSON.stringify({
+        subagentId,
+        status: "started",
+        mode: "async",
+        message: `子 agent 已在后台启动（ID: ${subagentId}），任务: ${task}`,
+      });
+    }
+
+    // 同步模式：阻塞等待子 agent 完成，返回实际结果
+    try {
+      for await (const event of subagentEngine.run(subagentId, task, childTools, context)) {
+        subagentBus.emit(subagentId, event);
+      }
+      const doc = await subagentDb.get(subagentId);
+      let result = doc?.result;
+      // Fallback: if DB result is empty, extract from the last assistant message
+      if (!result && doc?.messages) {
+        const lastAssistant = [...doc.messages].reverse().find((m) => m.role === "assistant");
+        result = lastAssistant?.content || lastAssistant?.reasoning_content || "";
+      }
+      return JSON.stringify({
+        subagentId,
+        status: "completed",
+        mode: "sync",
+        result: result || "无结果",
+        message: `子 agent 已完成任务。结果：\n${result || "无结果"}`,
+      });
+    } catch (err: any) {
+      await subagentDb.fail(subagentId, err.message);
+      subagentBus.emit(subagentId, { type: "error", message: err.message });
+      return JSON.stringify({
+        subagentId,
+        status: "failed",
+        mode: "sync",
+        error: err.message,
+        message: `子 agent 执行失败：${err.message}`,
+      });
+    }
   }
 
   getOrCreateSession(sessionId: string): ChatMessage[] {
@@ -153,6 +386,14 @@ export class ConversationEngine {
   }
 
   stopSession(sessionId: string) {
+    // First disband any active team for this session to prevent orphan teammates
+    const teamManager = TeamManager.getInstance();
+    const activeTeam = teamManager.getTeamBySession(sessionId);
+    if (activeTeam && activeTeam.status !== "shutdown") {
+      teamManager.disbandTeam(activeTeam.teamId, "User stopped the session").catch((err) => {
+        console.error("[Engine] Failed to disband team on stop:", err);
+      });
+    }
     this.stopFlags.set(sessionId, true);
   }
 
@@ -173,7 +414,8 @@ export class ConversationEngine {
     const messages = this.getOrCreateSession(sessionId);
     messages.push({ role: "user", content: userMessage });
 
-    const systemPrompt = await this.buildSystemPrompt(userId);
+    // 保存原始问题，用于多轮工具调用时的目标锚定和偏差检查
+    const originalQuestion = userMessage;
 
     // Flush dropped messages before compression to prevent info loss
     const { removed } = compressMessages(messages);
@@ -182,8 +424,11 @@ export class ConversationEngine {
     }
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const tools = this.getTools();
+      const tools = this.getTools(sessionId);
       const openaiTools = tools.map(toolDefToOpenAI);
+
+      // 每轮重建 system prompt，注入原始问题和当前轮次，防止多轮后跑偏
+      const systemPrompt = await this.buildSystemPrompt(userId, originalQuestion, round, sessionId);
 
       const apiMessages = await buildApiMessages(systemPrompt, messages, {
         summarize: (texts) => this.summarizeMessages(texts),
@@ -294,7 +539,7 @@ export class ConversationEngine {
             yield { type: "error", content: "已停止" };
             return;
           }
-          const result = await this.executeTool(entry.name, parsedArgs, userId);
+          const result = await this.executeTool(entry.name, parsedArgs, userId, sessionId);
 
           yield {
             type: "tool_result",
@@ -302,6 +547,16 @@ export class ConversationEngine {
             name: entry.name,
             result,
           };
+
+          // deep_research: inject research notification into conversation
+          if (entry.name === "deep_research") {
+            try {
+              const parsed = JSON.parse(result);
+              if (parsed.action === "start_research") {
+                yield { type: "text", content: `\n\n> 🔬 ${parsed.message}` };
+              }
+            } catch {}
+          }
 
           toolResults.push({ id: entry.id, content: result });
         }
@@ -329,11 +584,50 @@ export class ConversationEngine {
       return;
     }
 
-    yield { type: "error", content: "Max tool rounds reached" };
+    // Max rounds reached — ask the LLM to summarize progress and prompt the user
+    const summarySystemPrompt = await this.buildSystemPrompt(userId, originalQuestion, undefined, sessionId);
+    const summaryMessages = await buildApiMessages(summarySystemPrompt, messages, {
+      summarize: (texts) => this.summarizeMessages(texts),
+    });
+    summaryMessages.push({
+      role: "user",
+      content:
+        "你已经达到了最大工具调用轮次限制。请总结一下你到目前为止做了什么、进行到了哪一步、还有什么未完成的工作，然后询问用户是否要继续。",
+    });
+
+    const summaryStream = await (this.openai.chat.completions.create as any)({
+      model: this.model,
+      messages: summaryMessages,
+      stream: true,
+    });
+
+    let summaryContent = "";
+    for await (const chunk of summaryStream) {
+      const delta = chunk.choices[0]?.delta;
+      if (!delta) continue;
+      if (delta.content) {
+        summaryContent += delta.content;
+        yield { type: "text", content: delta.content };
+      }
+    }
+
+    messages.push({ role: "assistant", content: summaryContent });
+    this.triggerMemoryHooks(sessionId, userId);
+    yield { type: "done" };
   }
 
-  private async executeTool(name: string, args: Record<string, unknown>, userId?: string): Promise<string> {
-    const tools = this.getTools();
+  private async executeTool(name: string, args: Record<string, unknown>, userId?: string, sessionId?: string): Promise<string> {
+    // Team tools are handled specially because they need session context
+    if (name.startsWith("team_")) {
+      if (!sessionId) return `Error: ${name} requires session context`;
+      try {
+        return await executeTeamTool(name, args, sessionId);
+      } catch (err: any) {
+        return `Error executing ${name}: ${err.message}`;
+      }
+    }
+
+    const tools = this.getTools(sessionId || "");
     const tool = tools.find((t) => t.name === name);
     if (!tool) return `Unknown tool: ${name}`;
 
@@ -349,8 +643,8 @@ export class ConversationEngine {
     }
   }
 
-  private async buildSystemPrompt(userId?: string): Promise<string> {
-    const toolNames = this.getTools().map((t) => `- ${t.name}: ${t.description}`).join("\n");
+  private async buildSystemPrompt(userId?: string, originalQuestion?: string, currentRound?: number, sessionId?: string): Promise<string> {
+    const toolNames = this.getTools("").map((t) => `- ${t.name}: ${t.description}`).join("\n");
 
     const sections: string[] = [];
 
@@ -392,14 +686,63 @@ export class ConversationEngine {
 
     const memorySection = sections.length > 0 ? `\n\n${sections.join("\n\n")}` : "";
 
+    // 动态目标锚定：每轮提醒 LLM 原始问题，防止多轮工具调用后跑偏
+    let goalAnchorSection = "";
+    if (originalQuestion) {
+      goalAnchorSection = `\n\n【当前任务】用户的原始问题是："${originalQuestion}"。`;
+      if (typeof currentRound === "number" && currentRound > 0) {
+        goalAnchorSection += ` 这是你第 ${currentRound + 1} 轮工具调用。请检查你是否仍在回答这个问题。如果已经收集到足够信息，请直接给出最终回答，不要继续调用工具。`;
+      }
+    }
+
+    // Team context injection
+    let teamSection = "";
+    const teamManager = TeamManager.getInstance();
+    const activeTeam = sessionId ? teamManager.getTeamBySession(sessionId) : undefined;
+    if (activeTeam) {
+      const memberList = activeTeam.members
+        .map((m) => `  - ${m.name} (${m.color}): ${m.status}${m.currentTaskId ? ` [task: ${m.currentTaskId}]` : ""}`)
+        .join("\n");
+      const taskStats = teamManager.getTaskStats(activeTeam.teamId);
+      teamSection = `\n\n【当前 Team: ${activeTeam.name}】
+团队成员：
+${memberList || "  (暂无成员)"}
+任务进度：${taskStats?.completed ?? 0}/${taskStats?.total ?? 0} 完成
+
+Team 协调纪律（必须遵守）：
+1. 使用 team_spawn_teammate 创建专门 teammate 处理子任务
+2. spawn 完所有 teammate 后，**必须**调用 team_wait_all 等待它们全部完成
+3. team_wait_all 返回结果后，整合所有 teammate 的产出，给用户一个完整的最终回复
+4. 使用 team_send_message 与 teammate 通信（to: "<name>" 单播, to: "*" 广播）
+5. 使用 team_create_task / team_assign_task 管理任务
+6. 直接在回复中写文本，teammate 是看不到的 —— 必须使用工具通信
+7. 所有任务完成后使用 team_disband 解散 team
+
+重要：不要在 spawn 完 teammate 后立即回复用户。必须调用 team_wait_all 收集结果后再回复。`;
+    }
+
     return `你是一位 helpful assistant，拥有访问工具的能力。
 
-可用工具列表：
+## 可用工具列表
 ${toolNames}
+
+## 工具调用纪律（必须遵守）
+
+1. **目标锚定**：每次调用工具前，回顾用户的原始问题，确认当前行动与之相关。
+2. **偏差检查**：如果你发现工具返回的信息让你偏离了原问题，请主动纠正方向，忽略无关信息。
+3. **收敛判断**：当你已经获得足够信息来回答原问题时，请立即停止调用工具，直接给出最终回答。
+4. **避免发散**：不要基于工具返回的内容引入新的子主题或展开无关讨论。
+5. **思考结构**：你的思考过程应遵循以下框架：
+   - 【目标回顾】用户的原始问题是...
+   - 【当前进度】我已完成的步骤...
+   - 【信息分析】从工具返回中获得的关键信息...
+   - 【偏差检查】我是否在回答原问题？是/否，因为...
+   - 【足够判断】信息是否已足够？是/否
+   - 【下一步】调用工具或直接回答
 
 当需要使用工具时，请通过 function call 调用。对于 MCP 工具，如不确定参数 schema，可先使用 tool_search 获取完整定义。
 
-请使用与用户相同的语言回复。${memorySection}`;
+请使用与用户相同的语言回复。${goalAnchorSection}${memorySection}${teamSection}`;
   }
 
   private findLatestUserMessage(): string {

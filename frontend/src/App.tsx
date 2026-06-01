@@ -1,216 +1,16 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-
-// ── Types ──
-
-interface StreamEvent {
-  type: "reasoning" | "text" | "tool_call_start" | "tool_call_delta" | "tool_call_end" | "tool_result" | "error" | "done";
-  content?: string;
-  id?: string;
-  name?: string;
-  arguments?: Record<string, unknown>;
-  arguments_delta?: string;
-  result?: string;
-}
-
-interface ToolCallItem {
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-  result: string;
-  running: boolean;
-  argumentsDelta?: string;
-}
-
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  reasoning?: string;
-  toolCalls?: ToolCallItem[];
-  loading?: boolean;
-}
-
-interface Session {
-  sessionId: string;
-  userId: string;
-  title: string;
-  updatedAt: number;
-}
-
-// ── Helpers ──
-
-/** Strip "mcp__servername__" prefix for cleaner display */
-function displayName(name: string): string {
-  return name.replace(/^mcp__[^_]+__/, "");
-}
-
-/** Get a short label from tool arguments for inline preview */
-function argPreview(args: Record<string, unknown>): string {
-  for (const key of ["query", "search_query", "url", "path", "name", "question"]) {
-    const val = args[key];
-    if (typeof val === "string" && val.length > 0) {
-      return val.length > 60 ? val.slice(0, 60) + "..." : val;
-    }
-  }
-  return "";
-}
-
-/** Format timestamp to readable string */
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  const now = new Date();
-  const isToday = d.toDateString() === now.toDateString();
-  const h = d.getHours().toString().padStart(2, "0");
-  const m = d.getMinutes().toString().padStart(2, "0");
-  if (isToday) return `${h}:${m}`;
-  return `${d.getMonth() + 1}/${d.getDate()} ${h}:${m}`;
-}
-
-// ── Components ──
-
-// ── Markdown Renderer ──
-
-function MarkdownContent({ content }: { content: string }) {
-  return (
-    <div className="markdown-body">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-    </div>
-  );
-}
-
-// ── Components ──
-
-function Spinner() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      style={{ animation: "spin 1s linear infinite", flexShrink: 0 }}
-    >
-      <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ flexShrink: 0 }}>
-      <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function ChevronIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}
-    >
-      <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function ToolCallBlock({ tc }: { tc: ToolCallItem }) {
-  const [open, setOpen] = useState(false);
-  const shortName = displayName(tc.name);
-  const preview = argPreview(tc.arguments);
-  const isRunning = tc.running;
-  const isStreaming = !!tc.argumentsDelta;
-
-  // During streaming, show the raw delta JSON
-  const displayArgs = isStreaming
-    ? tc.argumentsDelta!
-    : JSON.stringify(tc.arguments, null, 2);
-
-  return (
-    <div style={styles.toolBlock}>
-      {/* Main row — always visible */}
-      <div style={styles.toolRow} onClick={() => setOpen(!open)}>
-        {isRunning ? (
-          <span style={{ color: "#007bff" }}><Spinner /></span>
-        ) : (
-          <span style={{ color: "#16a34a" }}><CheckIcon /></span>
-        )}
-        <ChevronIcon open={open} />
-        <span style={styles.toolLabel}>
-          <span style={styles.toolNameText}>{shortName}</span>
-          {isStreaming ? (
-            <span style={styles.toolRunning}>receiving args...</span>
-          ) : preview && !isRunning ? (
-            <span style={styles.toolPreview}>{preview}</span>
-          ) : null}
-          {!isStreaming && isRunning && <span style={styles.toolRunning}>running...</span>}
-        </span>
-      </div>
-
-      {/* Expandable details */}
-      {open && (
-        <div style={styles.toolDetails}>
-          {/* Arguments */}
-          <div style={styles.detailSection}>
-            <div style={styles.detailLabel}>Arguments</div>
-            <pre style={styles.codeBlock}>{displayArgs}</pre>
-          </div>
-
-          {/* Result */}
-          {tc.result && !isRunning && (
-            <div style={styles.detailSection}>
-              <div style={styles.detailLabel}>Result</div>
-              <pre style={styles.codeBlock}>{tc.result}</pre>
-            </div>
-          )}
-
-          {/* Running indicator */}
-          {isRunning && !isStreaming && (
-            <div style={{ ...styles.detailSection, color: "#666", fontStyle: "italic" }}>
-              Waiting for result...
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ReasoningBlock({ content }: { content: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div style={styles.reasoningBlock}>
-      <div style={styles.reasoningRow} onClick={() => setOpen(!open)}>
-        <ChevronIcon open={open} />
-        <span style={styles.reasoningLabel}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0, marginRight: 4 }}>
-            <circle cx="12" cy="12" r="10" />
-            <path d="M12 16v-4M12 8h.01" strokeLinecap="round" />
-          </svg>
-          Thinking
-        </span>
-      </div>
-      {open && (
-        <div style={styles.reasoningBody}>
-          <pre style={styles.codeBlock}>{content}</pre>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Main App ──
-
-const API_BASE = "http://localhost:3000";
+import { MarkdownContent } from "./components/MarkdownContent";
+import { ThinkingBlock } from "./components/ThinkingBlock";
+import { ToolCallBlock } from "./components/ToolBlocks";
+import { ResearchChain } from "./components/ResearchChain";
+import TeamPanel from "./components/TeamPanel";
+import { useTeam } from "./hooks/useTeam";
+import { Spinner, BrainIcon, MemoryIcon, SendIcon, StopIcon, CloseIcon } from "./components/Icons";
+import { API_BASE, formatTime } from "./lib/utils";
+import type { Message, Session, StreamEvent, ResearchStreamEvent, ResearchState } from "./types";
 
 export default function App() {
+  // ── State ──
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -236,8 +36,30 @@ export default function App() {
   const [memorySaving, setMemorySaving] = useState(false);
   const [memoryConsolidating, setMemoryConsolidating] = useState(false);
   const [skills, setSkills] = useState<Array<{ _id: string; name: string; description: string; enabled: boolean; builtin: boolean }>>([]);
+  const [deepResearchMode, setDeepResearchMode] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const saved = localStorage.getItem("theme");
+    if (saved === "light" || saved === "dark") return saved;
+    return "dark";
+  });
+  const [researchState, setResearchState] = useState<ResearchState>({
+    active: false, taskId: "", title: "", phase: "", detail: "",
+    progress: 0, findings: [], logs: [], completed: false, error: "",
+  });
+  const [researchSaved, setResearchSaved] = useState(false);
+  const [teamPanelOpen, setTeamPanelOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Team state
+  const {
+    team,
+    teammates,
+    tasks: teamTasks,
+    messages: teamMessages,
+    connected: teamConnected,
+    loadTeam,
+  } = useTeam();
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -247,7 +69,11 @@ export default function App() {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // Load sessions, thinking config and skills after login
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+
   useEffect(() => {
     if (!username) return;
     loadSessions(username);
@@ -261,6 +87,8 @@ export default function App() {
       .catch(() => {});
   }, [username]);
 
+  // ── Session Management ──
+
   const loadSessions = async (userId: string) => {
     try {
       const res = await fetch(`${API_BASE}/api/sessions?userId=${encodeURIComponent(userId)}`);
@@ -273,15 +101,11 @@ export default function App() {
       }));
       setSessions(list);
       if (list.length > 0) {
-        // Switch to the most recently updated session
         await switchSession(list[0].sessionId);
       } else {
-        // Auto-create first session
         await createSession(userId);
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   const createSession = async (userId: string, title?: string) => {
@@ -300,38 +124,90 @@ export default function App() {
       };
       setSessions((prev) => [newSession, ...prev]);
       await switchSession(data.sessionId);
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   const switchSession = async (sessionId: string) => {
     setCurrentSessionId(sessionId);
     setMessages([]);
+    // Load active team for this session
+    await loadTeam(sessionId);
+    setResearchState({
+      active: false, taskId: "", title: "", phase: "", detail: "",
+      progress: 0, findings: [], logs: [], completed: false, error: "",
+    });
+    setResearchSaved(false);
     try {
-      const res = await fetch(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}`, { cache: "no-store" });
       if (!res.ok) {
-        console.error("switchSession HTTP error:", res.status, await res.text());
         setMessages([]);
         return;
       }
       const data = await res.json();
       const history = convertHistory(data.messages || []);
       setMessages(history);
-    } catch (err) {
-      console.error("switchSession failed:", err);
+
+      try {
+        const researchRes = await fetch(`${API_BASE}/api/research?sessionId=${encodeURIComponent(sessionId)}`);
+        const task = await researchRes.json();
+        if (task) {
+          if (task.status === "completed" && task.hasReport) {
+            setResearchState({
+              active: true, taskId: task._id || "", title: task.query || "",
+              phase: "completed", detail: "", progress: 100,
+              findings: task.findings || [], logs: [], completed: true, error: "",
+            });
+          } else if (task.status === "failed") {
+            setResearchState({
+              active: true, taskId: task._id || "", title: task.query || "",
+              phase: "failed", detail: "", progress: 0,
+              findings: task.findings || [], logs: [], completed: false, error: task.error || "研究失败",
+            });
+          }
+        }
+      } catch {}
+    } catch {
       setMessages([]);
     }
   };
 
+  function convertHistory(serverMessages: any[]): Message[] {
+    const result: Message[] = [];
+    for (let i = 0; i < serverMessages.length; i++) {
+      const m = serverMessages[i];
+      if (m.role === "user") {
+        result.push({ role: "user", content: m.content });
+      } else if (m.role === "assistant") {
+        const toolCalls = (m.tool_calls || []).map((tc: any) => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments ? JSON.parse(tc.arguments) : {},
+          result: "",
+          running: false,
+        }));
+        let j = i + 1;
+        while (j < serverMessages.length && serverMessages[j].role === "tool") {
+          const toolMsg = serverMessages[j];
+          const tc = toolCalls.find((t: any) => t.id === toolMsg.tool_call_id);
+          if (tc) tc.result = toolMsg.content;
+          j++;
+        }
+        result.push({
+          role: "assistant",
+          content: m.content,
+          reasoning: m.reasoning_content,
+          toolCalls,
+        });
+      }
+    }
+    return result;
+  }
+
+  // ── Auth ──
+
   const handleLogin = async () => {
     const name = loginInput.trim();
-    if (!name) {
-      setLoginError("请输入用户名");
-      return;
-    }
+    if (!name) { setLoginError("请输入用户名"); return; }
     setLoginLoading(true);
     setLoginError("");
     try {
@@ -341,31 +217,11 @@ export default function App() {
         body: JSON.stringify({ username: name }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        setLoginError(data.error || "登录失败");
-        return;
-      }
+      if (!res.ok) { setLoginError(data.error || "登录失败"); return; }
       localStorage.setItem("username", data.user.username);
       setUsername(data.user.username);
-    } catch (err: any) {
-      setLoginError("网络错误，请重试");
-    } finally {
-      setLoginLoading(false);
-    }
-  };
-
-  const handleStop = async () => {
-    if (!abortControllerRef.current) return;
-    abortControllerRef.current.abort();
-    abortControllerRef.current = null;
-    try {
-      await fetch(`${API_BASE}/api/stop/${encodeURIComponent(currentSessionId)}`, {
-        method: "POST",
-      });
-    } catch {
-      // ignore
-    }
-    setSending(false);
+    } catch { setLoginError("网络错误，请重试"); }
+    finally { setLoginLoading(false); }
   };
 
   const handleLogout = () => {
@@ -388,15 +244,25 @@ export default function App() {
     setSkills([]);
   };
 
+  const handleStop = async () => {
+    if (!abortControllerRef.current) return;
+    abortControllerRef.current.abort();
+    abortControllerRef.current = null;
+    try {
+      await fetch(`${API_BASE}/api/stop/${encodeURIComponent(currentSessionId)}`, { method: "POST" });
+    } catch {}
+    setSending(false);
+  };
+
+  // ── Skills ──
+
   const loadSkills = async () => {
     if (!username) return;
     try {
       const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(username)}`);
       const data = await res.json();
       setSkills(data.skills || []);
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   const toggleSkill = async (id: string, enabled: boolean) => {
@@ -408,10 +274,10 @@ export default function App() {
         body: JSON.stringify({ enabled: !enabled }),
       });
       setSkills((prev) => prev.map((s) => (s._id === id ? { ...s, enabled: !enabled } : s)));
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
+
+  // ── Memory ──
 
   const loadMemory = async () => {
     if (!username) return;
@@ -422,15 +288,10 @@ export default function App() {
       setMemoryMarkdown(data.longTerm || "");
       setMemoryDraft(data.longTerm || "");
       setDailyLogs(data.dailyLogs || []);
-      // Load commitments separately
       const commitRes = await fetch(`${API_BASE}/api/commitments/${encodeURIComponent(username)}`);
       const commitData = await commitRes.json();
       setCommitments(commitData.commitments || []);
-    } catch {
-      // ignore
-    } finally {
-      setMemoryLoading(false);
-    }
+    } catch {} finally { setMemoryLoading(false); }
   };
 
   const saveMemory = async () => {
@@ -443,69 +304,51 @@ export default function App() {
         body: JSON.stringify({ markdown: memoryDraft }),
       });
       setMemoryMarkdown(memoryDraft);
-    } catch {
-      // ignore
-    } finally {
-      setMemorySaving(false);
-    }
+    } catch {} finally { setMemorySaving(false); }
   };
 
   const consolidateMemory = async () => {
     if (!username) return;
     setMemoryConsolidating(true);
     try {
-      const res = await fetch(`${API_BASE}/api/memory/${encodeURIComponent(username)}/consolidate`, {
-        method: "POST",
-      });
+      const res = await fetch(`${API_BASE}/api/memory/${encodeURIComponent(username)}/consolidate`, { method: "POST" });
       const data = await res.json();
       setMemoryMarkdown(data.longTerm || "");
       setMemoryDraft(data.longTerm || "");
-    } catch {
-      // ignore
-    } finally {
-      setMemoryConsolidating(false);
-    }
+    } catch {} finally { setMemoryConsolidating(false); }
   };
 
   const clearAllMemory = async () => {
     if (!username) return;
     if (!window.confirm("确定清空所有记忆吗？长期记忆、日志和待办都会被删除。")) return;
     try {
-      await fetch(`${API_BASE}/api/memory/${encodeURIComponent(username)}`, {
-        method: "DELETE",
-      });
+      await fetch(`${API_BASE}/api/memory/${encodeURIComponent(username)}`, { method: "DELETE" });
       setMemoryMarkdown("");
       setMemoryDraft("");
       setDailyLogs([]);
       setCommitments([]);
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   const fulfillCommitment = async (id: string) => {
     if (!username) return;
     try {
-      await fetch(`${API_BASE}/api/commitments/${encodeURIComponent(username)}/${encodeURIComponent(id)}/fulfill`, {
-        method: "POST",
-      });
+      await fetch(`${API_BASE}/api/commitments/${encodeURIComponent(username)}/${encodeURIComponent(id)}/fulfill`, { method: "POST" });
       setCommitments((prev) => prev.filter((c) => c._id !== id));
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   const deleteCommitment = async (id: string) => {
     if (!username) return;
     try {
-      await fetch(`${API_BASE}/api/commitments/${encodeURIComponent(username)}/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      });
+      await fetch(`${API_BASE}/api/commitments/${encodeURIComponent(username)}/${encodeURIComponent(id)}`, { method: "DELETE" });
       setCommitments((prev) => prev.filter((c) => c._id !== id));
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
+
+  // ── Thinking Config ──
+
+  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
 
   const toggleThinking = async () => {
     const next = !thinkingEnabled;
@@ -516,9 +359,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ thinking: next }),
       });
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   const switchEffort = async (value: "high" | "max") => {
@@ -529,10 +370,10 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reasoningEffort: value }),
       });
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
+
+  // ── Session Actions ──
 
   const handleRenameSession = async (sessionId: string, newTitle: string) => {
     const trimmed = newTitle.trim();
@@ -543,12 +384,8 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: trimmed }),
       });
-      setSessions((prev) =>
-        prev.map((s) => (s.sessionId === sessionId ? { ...s, title: trimmed } : s))
-      );
-    } catch {
-      // ignore
-    }
+      setSessions((prev) => prev.map((s) => (s.sessionId === sessionId ? { ...s, title: trimmed } : s)));
+    } catch {}
     setEditingSessionId("");
     setRenameInput("");
   };
@@ -556,67 +393,128 @@ export default function App() {
   const handleDeleteSession = async (sessionId: string) => {
     if (!window.confirm("确定删除这个对话吗？")) return;
     try {
-      await fetch(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}`, {
-        method: "DELETE",
-      });
+      await fetch(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
       setSessions((prev) => prev.filter((s) => s.sessionId !== sessionId));
       setMenuOpenSessionId("");
       if (currentSessionId === sessionId) {
         setCurrentSessionId("");
         setMessages([]);
-        // Switch to another session if available
         const remaining = sessions.filter((s) => s.sessionId !== sessionId);
-        if (remaining.length > 0) {
-          await switchSession(remaining[0].sessionId);
-        } else if (username) {
-          await createSession(username);
-        }
+        if (remaining.length > 0) await switchSession(remaining[0].sessionId);
+        else if (username) await createSession(username);
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
-  // Convert backend ChatMessage[] to frontend Message[]
-  function convertHistory(serverMessages: any[]): Message[] {
-    const result: Message[] = [];
-    for (let i = 0; i < serverMessages.length; i++) {
-      const m = serverMessages[i];
-      if (m.role === "user") {
-        result.push({ role: "user", content: m.content });
-      } else if (m.role === "assistant") {
-        const toolCalls: ToolCallItem[] = (m.tool_calls || []).map((tc: any) => ({
-          id: tc.id,
-          name: tc.name,
-          arguments: tc.arguments ? JSON.parse(tc.arguments) : {},
-          result: "",
-          running: false,
-        }));
-        let j = i + 1;
-        while (j < serverMessages.length && serverMessages[j].role === "tool") {
-          const toolMsg = serverMessages[j];
-          const tc = toolCalls.find((t) => t.id === toolMsg.tool_call_id);
-          if (tc) tc.result = toolMsg.content;
-          j++;
+  // ── Research ──
+
+  const startResearch = useCallback(async (query: string) => {
+    setResearchState({
+      active: true, taskId: "", title: query, phase: "starting", detail: "",
+      progress: 0, findings: [], logs: [], completed: false, error: "",
+    });
+    try {
+      const res = await fetch(`${API_BASE}/api/research`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, sessionId: currentSessionId, userId: username }),
+      });
+      if (!res.ok || !res.body) throw new Error("Failed to start research");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event: ResearchStreamEvent = JSON.parse(line.slice(6));
+            setResearchState((prev) => {
+              const next = { ...prev };
+              switch (event.type) {
+                case "research_started":
+                  next.taskId = event.taskId || "";
+                  next.title = event.title || prev.title;
+                  break;
+                case "phase_changed":
+                  next.phase = event.phase || "";
+                  next.detail = event.detail || "";
+                  break;
+                case "progress":
+                  next.progress = event.total ? Math.round(((event.current || 0) / event.total) * 100) : prev.progress;
+                  next.detail = event.message || prev.detail;
+                  break;
+                case "finding":
+                  next.findings = [...(prev.findings || []), {
+                    sectionId: event.sectionId || 0,
+                    heading: event.heading || "",
+                    summary: event.summary || "",
+                  }];
+                  break;
+                case "search_query":
+                  next.logs = [...(prev.logs || []), { type: "search_query", query: event.query, round: event.round, timestamp: Date.now() }];
+                  break;
+                case "source_found":
+                  next.logs = [...(prev.logs || []), { type: "source_found", title: event.title, url: event.url, snippet: event.snippet, timestamp: Date.now() }];
+                  break;
+                case "page_read":
+                  next.logs = [...(prev.logs || []), { type: "page_read", url: event.url, title: event.title, status: event.status, timestamp: Date.now() }];
+                  break;
+                case "gap_detected":
+                  next.detail = `发现信息缺口，正在进行补充搜索：${(event.gaps || []).join("、")}`;
+                  break;
+                case "report_ready":
+                  next.completed = true;
+                  next.phase = "completed";
+                  next.progress = 100;
+                  next.taskId = event.taskId || prev.taskId;
+                  break;
+                case "error":
+                  next.error = event.message || "研究失败";
+                  next.active = false;
+                  break;
+              }
+              return next;
+            });
+          } catch {}
         }
-        result.push({
-          role: "assistant",
-          content: m.content,
-          reasoning: m.reasoning_content,
-          toolCalls,
-        });
       }
+    } catch (err: any) {
+      setResearchState((prev) => ({ ...prev, error: err.message, active: false }));
     }
-    return result;
-  }
+  }, [currentSessionId]);
+
+  // ── Send Message ──
 
   const send = async () => {
     const text = input.trim();
     if (!text || sending) return;
+
+    if (deepResearchMode) {
+      setDeepResearchMode(false);
+      setMessages((prev) => [...prev, { role: "user" as const, content: input }]);
+      setInput("");
+      startResearch(input);
+      return;
+    }
+
+    if (input.trim().startsWith("/research ")) {
+      const researchQuery = input.trim().slice(10).trim();
+      if (researchQuery) {
+        setMessages((prev) => [...prev, { role: "user" as const, content: input }]);
+        setInput("");
+        startResearch(researchQuery);
+        return;
+      }
+    }
+
     setInput("");
     setSending(true);
 
-    // Auto-rename session on first message
     if (messages.length === 0) {
       const title = text.length > 20 ? text.slice(0, 20) + "..." : text;
       fetch(`${API_BASE}/api/sessions/${encodeURIComponent(currentSessionId)}`, {
@@ -624,9 +522,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title }),
       }).catch(() => {});
-      setSessions((prev) =>
-        prev.map((s) => (s.sessionId === currentSessionId ? { ...s, title } : s))
-      );
+      setSessions((prev) => prev.map((s) => (s.sessionId === currentSessionId ? { ...s, title } : s)));
     }
 
     const userMsg: Message = { role: "user", content: text };
@@ -641,35 +537,27 @@ export default function App() {
         body: JSON.stringify({ message: text, sessionId: currentSessionId }),
         signal: abortControllerRef.current.signal,
       });
-
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
-
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const json = line.slice(6);
           if (!json) continue;
-
           const event: StreamEvent = JSON.parse(json);
-
           setMessages((prev) => {
             const updated = [...prev];
             const last = { ...updated[updated.length - 1] };
-            // Deep copy toolCalls so React detects the change
             last.toolCalls = last.toolCalls ? [...last.toolCalls.map((tc) => ({ ...tc }))] : [];
             updated[updated.length - 1] = last;
-
             switch (event.type) {
               case "reasoning":
                 last.reasoning = (last.reasoning ?? "") + (event.content ?? "");
@@ -678,51 +566,32 @@ export default function App() {
                 last.content += event.content ?? "";
                 break;
               case "tool_call_start":
-                last.toolCalls = last.toolCalls ?? [];
-                last.toolCalls.push({
-                  id: event.id ?? "",
-                  name: event.name ?? "",
-                  arguments: event.arguments ?? {},
-                  result: "",
-                  running: true,
-                  argumentsDelta: "",
+                last.toolCalls!.push({
+                  id: event.id ?? "", name: event.name ?? "",
+                  arguments: event.arguments ?? {}, result: "", running: true, argumentsDelta: "",
                 });
                 break;
               case "tool_call_delta": {
-                if (last.toolCalls) {
-                  const idx = last.toolCalls.findIndex((t) => t.id === event.id);
-                  if (idx >= 0) {
-                    last.toolCalls[idx] = {
-                      ...last.toolCalls[idx],
-                      argumentsDelta: (last.toolCalls[idx] as any).argumentsDelta + (event.arguments_delta ?? ""),
-                    };
-                  }
+                const idx = last.toolCalls!.findIndex((t) => t.id === event.id);
+                if (idx >= 0) {
+                  last.toolCalls![idx] = {
+                    ...last.toolCalls![idx],
+                    argumentsDelta: (last.toolCalls![idx] as any).argumentsDelta + (event.arguments_delta ?? ""),
+                  };
                 }
                 break;
               }
               case "tool_call_end": {
-                if (last.toolCalls) {
-                  const idx = last.toolCalls.findIndex((t) => t.id === event.id);
-                  if (idx >= 0) {
-                    last.toolCalls[idx] = {
-                      ...last.toolCalls[idx],
-                      arguments: event.arguments ?? {},
-                      argumentsDelta: undefined,
-                    };
-                  }
+                const idx = last.toolCalls!.findIndex((t) => t.id === event.id);
+                if (idx >= 0) {
+                  last.toolCalls![idx] = { ...last.toolCalls![idx], arguments: event.arguments ?? {}, argumentsDelta: undefined };
                 }
                 break;
               }
               case "tool_result": {
-                if (last.toolCalls) {
-                  const idx = last.toolCalls.findIndex((t) => t.id === event.id);
-                  if (idx >= 0) {
-                    last.toolCalls[idx] = {
-                      ...last.toolCalls[idx],
-                      result: event.result ?? "",
-                      running: false,
-                    };
-                  }
+                const idx = last.toolCalls!.findIndex((t) => t.id === event.id);
+                if (idx >= 0) {
+                  last.toolCalls![idx] = { ...last.toolCalls![idx], result: event.result ?? "", running: false };
                 }
                 break;
               }
@@ -738,17 +607,13 @@ export default function App() {
       if (err.name === "AbortError") {
         setMessages((prev) => {
           const updated = [...prev];
-          const last = { ...updated[updated.length - 1] };
-          last.loading = false;
-          updated[updated.length - 1] = last;
+          updated[updated.length - 1] = { ...updated[updated.length - 1], loading: false };
           return updated;
         });
       } else {
         setMessages((prev) => {
           const updated = [...prev];
-          const last = { ...updated[updated.length - 1] };
-          last.content = `Connection error: ${err.message}`;
-          updated[updated.length - 1] = last;
+          updated[updated.length - 1] = { ...updated[updated.length - 1], content: `Connection error: ${err.message}` };
           return updated;
         });
       }
@@ -762,108 +627,61 @@ export default function App() {
     setSending(false);
   };
 
-  // 未登录 — 显示登录页
+  // ── Render: Login ──
+
   if (!username) {
     return (
-      <div style={styles.loginContainer}>
-        <style>{`
-          @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-          }
-        `}</style>
-        <div style={styles.loginCard}>
-          <div style={styles.loginIcon}>🧠 CAP</div>
-          <h2 style={styles.loginTitle}>认知智能体平台</h2>
-          <p style={styles.loginSubtitle}>输入身份标识以初始化认知上下文</p>
+      <div className="login-page">
+        <div className="login-card">
+          <div className="login-brand">
+            <div className="login-brand-title">Nexus</div>
+            <div className="login-brand-subtitle">连接智能，开启对话</div>
+          </div>
           <input
-            style={styles.loginInput}
+            className="login-input"
             value={loginInput}
             onChange={(e) => setLoginInput(e.target.value)}
             placeholder="用户名"
             disabled={loginLoading}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleLogin();
-              }
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleLogin(); }
             }}
           />
-          {loginError && <div style={styles.loginError}>{loginError}</div>}
+          {loginError && <div className="login-error">{loginError}</div>}
           <button
-            style={{
-              ...styles.loginButton,
-              opacity: loginLoading || !loginInput.trim() ? 0.6 : 1,
-            }}
+            className="login-btn"
             onClick={handleLogin}
             disabled={loginLoading || !loginInput.trim()}
           >
-            {loginLoading ? (
-              <span style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
-                <Spinner /> 登录中...
-              </span>
-            ) : (
-              "进入"
-            )}
+            {loginLoading ? <><Spinner /> 登录中...</> : "进入"}
           </button>
         </div>
       </div>
     );
   }
 
-  // 已登录 — 显示侧边栏 + 聊天界面
-  return (
-    <div style={styles.layout}>
-      {/* CSS keyframes + Markdown styles */}
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        .markdown-body { font-size: 14px; line-height: 1.6; color: #1a1a1a; }
-        .markdown-body h1 { font-size: 18px; font-weight: 700; margin: 12px 0 6px; }
-        .markdown-body h2 { font-size: 16px; font-weight: 600; margin: 10px 0 5px; }
-        .markdown-body h3 { font-size: 15px; font-weight: 600; margin: 8px 0 4px; }
-        .markdown-body h4, .markdown-body h5, .markdown-body h6 { font-size: 14px; font-weight: 600; margin: 6px 0 3px; }
-        .markdown-body p { margin: 0 0 8px; }
-        .markdown-body p:last-child { margin-bottom: 0; }
-        .markdown-body strong { font-weight: 600; }
-        .markdown-body em { font-style: italic; }
-        .markdown-body ul, .markdown-body ol { margin: 4px 0; padding-left: 20px; }
-        .markdown-body li { margin: 2px 0; }
-        .markdown-body li > p { margin: 0; }
-        .markdown-body a { color: #007bff; text-decoration: none; }
-        .markdown-body a:hover { text-decoration: underline; }
-        .markdown-body table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; }
-        .markdown-body th, .markdown-body td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
-        .markdown-body th { background: #f8f8f8; font-weight: 600; }
-        .markdown-body tr:nth-child(even) { background: #fafafa; }
-        .markdown-body blockquote { margin: 8px 0; padding: 8px 12px; border-left: 3px solid #ddd; color: #666; background: #f9f9f9; border-radius: 0 4px 4px 0; }
-        .markdown-body hr { border: none; border-top: 1px solid #e5e5e5; margin: 12px 0; }
-        .markdown-body code { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12.5px; background: #f0f0f0; padding: 1px 4px; border-radius: 3px; }
-        .markdown-body pre { background: #f5f5f5; padding: 10px; border-radius: 6px; overflow: auto; max-height: 300px; margin: 8px 0; border: 1px solid #eee; }
-        .markdown-body pre code { background: none; padding: 0; }
-        .session-item:hover { background: #f5f5f5; }
-        .session-item-active { background: #f0f7ff !important; }
-      `}</style>
+  // ── Render: Main App ──
 
-      {/* Sidebar */}
-      <div style={styles.sidebar}>
-        <div style={styles.sidebarHeader}>
-          <span style={styles.sidebarTitle}>🧠 CAP Engine</span>
-          <button style={styles.newChatBtn} onClick={() => createSession(username)}>
-            + 新会话
-          </button>
+  return (
+    <div className="app-layout">
+      {/* ── Sidebar ── */}
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <span className="sidebar-brand">
+            <span className="sidebar-brand-icon">◈</span>
+            <span>Nexus</span>
+          </span>
+          <button className="btn-new-chat" onClick={() => createSession(username)}>+ 新会话</button>
         </div>
-        <div style={styles.sessionList}>
+
+        <div className="session-list">
           {sessions.map((s) => {
             const showMenu = hoveredSessionId === s.sessionId || menuOpenSessionId === s.sessionId;
             const isMenuOpen = menuOpenSessionId === s.sessionId;
             return (
               <div
                 key={s.sessionId}
-                className={s.sessionId === currentSessionId ? "session-item session-item-active" : "session-item"}
-                style={{ ...styles.sessionItem, position: "relative" }}
+                className={`session-item ${s.sessionId === currentSessionId ? "active" : ""}`}
                 onMouseEnter={() => setHoveredSessionId(s.sessionId)}
                 onMouseLeave={() => setHoveredSessionId("")}
                 onClick={() => switchSession(s.sessionId)}
@@ -871,56 +689,36 @@ export default function App() {
                 {editingSessionId === s.sessionId ? (
                   <input
                     autoFocus
-                    style={styles.sessionRenameInput}
+                    className="session-rename-input"
                     value={renameInput}
                     onChange={(e) => setRenameInput(e.target.value)}
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleRenameSession(s.sessionId, renameInput);
-                      if (e.key === "Escape") {
-                        setEditingSessionId("");
-                        setRenameInput("");
-                      }
+                      if (e.key === "Escape") { setEditingSessionId(""); setRenameInput(""); }
                     }}
                     onBlur={() => handleRenameSession(s.sessionId, renameInput)}
                   />
                 ) : (
                   <>
-                    <div style={styles.sessionTitle}>{s.title}</div>
-                    <div style={styles.sessionTime}>{formatTime(s.updatedAt)}</div>
+                    <div className="session-title">{s.title}</div>
+                    <div className="session-time">{formatTime(s.updatedAt)}</div>
                   </>
                 )}
                 {showMenu && editingSessionId !== s.sessionId && (
                   <button
-                    style={styles.sessionMenuBtn}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMenuOpenSessionId(isMenuOpen ? "" : s.sessionId);
-                    }}
+                    className={`session-menu-btn ${isMenuOpen ? "open" : ""}`}
+                    onClick={(e) => { e.stopPropagation(); setMenuOpenSessionId(isMenuOpen ? "" : s.sessionId); }}
                   >
                     ⋮
                   </button>
                 )}
                 {isMenuOpen && (
-                  <div style={styles.sessionMenuDropdown}>
-                    <button
-                      style={styles.sessionMenuItem}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMenuOpenSessionId("");
-                        setEditingSessionId(s.sessionId);
-                        setRenameInput(s.title);
-                      }}
-                    >
+                  <div className="session-menu-dropdown">
+                    <button className="session-menu-item" onClick={(e) => { e.stopPropagation(); setMenuOpenSessionId(""); setEditingSessionId(s.sessionId); setRenameInput(s.title); }}>
                       ✎ 重命名
                     </button>
-                    <button
-                      style={styles.sessionMenuDelete}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteSession(s.sessionId);
-                      }}
-                    >
+                    <button className="session-menu-delete" onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.sessionId); }}>
                       🗑 删除
                     </button>
                   </div>
@@ -929,264 +727,279 @@ export default function App() {
             );
           })}
         </div>
-        <div style={styles.thinkingControls}>
-          <div style={styles.thinkingRow}>
-            <span style={styles.thinkingLabel}>Thinking</span>
+
+        <div className="sidebar-controls">
+          <div className="control-row">
+            <span className="control-label">主题</span>
             <button
-              style={{
-                ...styles.thinkingToggle,
-                background: thinkingEnabled ? "#007bff" : "#ccc",
-              }}
-              onClick={toggleThinking}
+              className="theme-toggle-btn"
+              onClick={toggleTheme}
+              title={theme === "dark" ? "切换到浅色" : "切换到深色"}
             >
-              <span
-                style={{
-                  ...styles.thinkingToggleKnob,
-                  transform: thinkingEnabled ? "translateX(14px)" : "translateX(0)",
-                }}
-              />
+              {theme === "dark" ? "🌙" : "☀️"}
+            </button>
+          </div>
+          <div className="control-row">
+            <span className="control-label">Thinking</span>
+            <button className={`toggle-switch ${thinkingEnabled ? "on" : ""}`} onClick={toggleThinking}>
+              <span className="knob" />
             </button>
           </div>
           {thinkingEnabled && (
-            <div style={styles.effortRow}>
-              <button
-                style={{
-                  ...styles.effortBtn,
-                  background: reasoningEffort === "high" ? "#e6f0ff" : "transparent",
-                  color: reasoningEffort === "high" ? "#007bff" : "#666",
-                }}
-                onClick={() => switchEffort("high")}
-              >
-                high
-              </button>
-              <button
-                style={{
-                  ...styles.effortBtn,
-                  background: reasoningEffort === "max" ? "#e6f0ff" : "transparent",
-                  color: reasoningEffort === "max" ? "#007bff" : "#666",
-                }}
-                onClick={() => switchEffort("max")}
-              >
-                max
-              </button>
+            <div className="effort-row">
+              <button className={`effort-btn ${reasoningEffort === "high" ? "active" : ""}`} onClick={() => switchEffort("high")}>high</button>
+              <button className={`effort-btn ${reasoningEffort === "max" ? "active" : ""}`} onClick={() => switchEffort("max")}>max</button>
             </div>
           )}
         </div>
-        <div style={styles.memorySection}>
-          <button
-            style={styles.memoryBtn}
-            onClick={() => {
-              setMemoryOpen(true);
-              loadMemory();
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
-              <path d="M12 2a10 10 0 0 1 10 10c0 5.523-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2z" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M12 16v-4M12 8h.01" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
+
+        <div className="sidebar-section">
+          <button className="sidebar-btn" onClick={() => { setMemoryOpen(true); loadMemory(); }}>
+            <MemoryIcon />
             我的记忆
           </button>
         </div>
-        {/* Skills */}
-        <div style={styles.skillsSection}>
-          <div style={styles.skillsLabel}>技能</div>
+
+        <div className="sidebar-section">
+          <div className="sidebar-label">技能</div>
           {skills.length === 0 ? (
-            <div style={styles.skillsEmpty}>加载中...</div>
+            <div style={{ fontSize: "12px", color: "var(--text-muted)", padding: "4px 0" }}>加载中...</div>
           ) : (
-            <div style={styles.skillsList}>
+            <div className="skills-list">
               {skills.map((s) => (
-                <div key={s._id} style={styles.skillRow}>
-                  <span style={styles.skillName}>{s.name}</span>
-                  <button
-                    style={{
-                      ...styles.skillToggle,
-                      background: s.enabled ? "#007bff" : "#ccc",
-                    }}
-                    onClick={() => toggleSkill(s._id, s.enabled)}
-                  >
-                    <span
-                      style={{
-                        ...styles.skillToggleKnob,
-                        transform: s.enabled ? "translateX(14px)" : "translateX(0)",
-                      }}
-                    />
+                <div key={s._id} className="skill-row">
+                  <span className="skill-name">{s.name}</span>
+                  <button className={`toggle-switch ${s.enabled ? "on" : ""}`} onClick={() => toggleSkill(s._id, s.enabled)}>
+                    <span className="knob" />
                   </button>
                 </div>
               ))}
             </div>
           )}
         </div>
-        <div style={styles.sidebarFooter}>
-          <span style={styles.username}>{username}</span>
-          <button style={styles.logoutBtn} onClick={handleLogout}>
-            退出
-          </button>
-        </div>
-      </div>
 
-      {/* Main chat area */}
-      <div style={styles.main}>
-        <div style={styles.messages}>
+        <div className="sidebar-footer">
+          <span className="username">{username}</span>
+          <button className="logout-btn" onClick={handleLogout}>退出</button>
+        </div>
+      </aside>
+
+      {/* ── Main Chat Area ── */}
+      <main className="main-area">
+        <div className="messages-container">
           {messages.length === 0 && (
-            <div style={styles.empty}>
-              <div style={styles.emptyIcon}>🧠</div>
-              <div>初始化认知上下文，开始人机协作...</div>
+            <div className="empty-state">
+              <div className="empty-state-icon">✦</div>
+              <div className="empty-state-title">开始对话</div>
+              <div className="empty-state-subtitle">提问、研究、创造 — 让 AI 为你工作</div>
             </div>
           )}
+
           {messages.map((msg, i) => (
-            <div key={i} style={msg.role === "user" ? styles.userRow : styles.assistantRow}>
-              <div style={styles.avatar}>
-                {msg.role === "user" ? "You" : "AI"}
-              </div>
+            <div key={i} className={`message-row ${msg.role}`}>
+              <div className={`avatar ${msg.role}`}>{msg.role === "user" ? "You" : "AI"}</div>
               {msg.role === "user" ? (
-                <div style={styles.userBubble}>{msg.content}</div>
+                <div className="user-bubble">{msg.content}</div>
               ) : (
-                <div style={styles.assistantBubble}>
-                  {msg.reasoning && <ReasoningBlock content={msg.reasoning} />}
+                <div className="assistant-content">
+                  <div className="assistant-header">Nexus</div>
+                  {msg.reasoning && <ThinkingBlock content={msg.reasoning} />}
                   {msg.content && <MarkdownContent content={msg.content} />}
                   {msg.toolCalls?.map((tc, j) => (
                     <ToolCallBlock key={tc.id || j} tc={tc} />
                   ))}
                   {msg.loading && !msg.content && !msg.toolCalls?.length && (
-                    <span style={styles.typing}><Spinner /> thinking...</span>
+                    <div className="typing-indicator"><Spinner /> thinking...</div>
                   )}
                 </div>
               )}
             </div>
           ))}
+
           <div ref={bottomRef} />
+
+          {/* Research Progress */}
+          {researchState.active && (
+            <div className="research-card">
+              <div className="research-card-header">
+                <span style={{ fontSize: "20px" }}>🔬</span>
+                <span className="research-card-title">深度研究进行中</span>
+                {researchState.title && <span className="research-card-query">: {researchState.title}</span>}
+              </div>
+              <div className="research-progress-track">
+                <div className="research-progress-bar" style={{ width: `${researchState.progress}%` }} />
+              </div>
+              <div className="research-status">
+                {researchState.detail || researchState.phase || "准备中..."}
+              </div>
+              {researchState.logs.length > 0 && (
+                <div className="research-divider">
+                  <div className="research-section-label">研究链条</div>
+                  <ResearchChain logs={researchState.logs} />
+                </div>
+              )}
+              {researchState.findings.length > 0 && (
+                <div className="research-divider">
+                  <div className="research-section-label">已完成 {researchState.findings.length} 个章节的调研</div>
+                  {researchState.findings.map((f, i) => (
+                    <div key={i} className="research-finding">
+                      <span className="research-finding-check">✓</span>
+                      <span className="research-finding-heading">{f.heading}</span>
+                      <p className="research-finding-summary">
+                        {f.summary.slice(0, 120)}{f.summary.length > 120 ? "..." : ""}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {researchState.error && <div className="research-error">❌ {researchState.error}</div>}
+            </div>
+          )}
+
+          {/* Report Ready */}
+          {researchState.completed && researchState.taskId && (
+            <div className="report-card">
+              <div className="report-card-header">
+                <span style={{ fontSize: "20px" }}>📊</span>
+                <span>调研报告已生成</span>
+              </div>
+              <div className="report-actions">
+                <a
+                  className="btn-success"
+                  href={`${API_BASE}/api/research/${researchState.taskId}/report`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  查看报告 →
+                </a>
+                <button
+                  className="btn-primary"
+                  onClick={async () => {
+                    if (!username || !researchState.taskId) return;
+                    try {
+                      const res = await fetch(`${API_BASE}/api/research/${researchState.taskId}/save-as-skill`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ userId: username }),
+                      });
+                      const data = await res.json();
+                      if (data.success) {
+                        setResearchSaved(true);
+                        alert(`已保存为 Skill: ${data.skillName}`);
+                        loadSkills();
+                      } else {
+                        alert("保存失败: " + (data.error || "未知错误"));
+                      }
+                    } catch (err: any) { alert("保存失败: " + err.message); }
+                  }}
+                  disabled={researchSaved}
+                  style={{ background: researchSaved ? "var(--bg-hover)" : undefined }}
+                >
+                  {researchSaved ? "✓ 已保存为 Skill" : "💾 保存为 Skill"}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
+        {/* ── Input Bar ── */}
         <form
-          style={styles.inputBar}
-          onSubmit={(e) => {
-            e.preventDefault();
-            send();
-          }}
+          className="input-bar"
+          onSubmit={(e) => { e.preventDefault(); send(); }}
         >
-          <input
-            style={styles.input}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Type a message..."
-            disabled={sending}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-          />
-          {sending ? (
-            <button
-              style={{ ...styles.stopButton }}
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                handleStop();
+          <div className="input-wrapper">
+            <textarea
+              className="input-field"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="输入消息..."
+              disabled={sending}
+              rows={1}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
               }}
-            >
-              停止
+            />
+            <div className="input-actions">
+              <button
+                type="button"
+                className={`btn-research-toggle ${deepResearchMode ? "active" : ""}`}
+                onClick={() => setDeepResearchMode(!deepResearchMode)}
+                title="深度研究模式"
+              >
+                🔬 {deepResearchMode ? "研究模式" : "深度研究"}
+              </button>
+            </div>
+          </div>
+          {sending ? (
+            <button className="btn-stop" type="button" onClick={(e) => { e.preventDefault(); handleStop(); }}>
+              <StopIcon size={14} />
             </button>
           ) : (
-            <button style={{ ...styles.button, opacity: !input.trim() ? 0.5 : 1 }} type="submit" disabled={!input.trim()}>
-              Send
+            <button className="btn-send" type="submit" disabled={!input.trim()}>
+              <SendIcon size={16} />
             </button>
           )}
         </form>
-      </div>
+      </main>
 
-      {/* Memory Panel Modal */}
+      {/* ── Memory Drawer ── */}
       {memoryOpen && (
-        <div style={styles.memoryOverlay} onClick={() => setMemoryOpen(false)}>
-          <div style={styles.memoryModal} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.memoryHeader}>
-              <h3 style={styles.memoryTitle}>我的记忆</h3>
-              <button style={styles.memoryCloseBtn} onClick={() => setMemoryOpen(false)}>
-                ✕
+        <>
+          <div className="memory-overlay" onClick={() => setMemoryOpen(false)} />
+          <div className="memory-drawer">
+            <div className="memory-drawer-header">
+              <h3 className="memory-drawer-title">我的记忆</h3>
+              <button className="memory-drawer-close" onClick={() => setMemoryOpen(false)}>
+                <CloseIcon size={18} />
               </button>
             </div>
-            {/* Tabs */}
-            <div style={styles.memoryTabs}>
-              <button
-                style={{
-                  ...styles.memoryTab,
-                  ...(memoryTab === "longTerm" ? styles.memoryTabActive : {}),
-                }}
-                onClick={() => setMemoryTab("longTerm")}
-              >
-                长期记忆
-              </button>
-              <button
-                style={{
-                  ...styles.memoryTab,
-                  ...(memoryTab === "dailyLogs" ? styles.memoryTabActive : {}),
-                }}
-                onClick={() => setMemoryTab("dailyLogs")}
-              >
-                每日日志
-              </button>
-              <button
-                style={{
-                  ...styles.memoryTab,
-                  ...(memoryTab === "commitments" ? styles.memoryTabActive : {}),
-                }}
-                onClick={() => setMemoryTab("commitments")}
-              >
+            <div className="memory-tabs">
+              <button className={`memory-tab ${memoryTab === "longTerm" ? "active" : ""}`} onClick={() => setMemoryTab("longTerm")}>长期记忆</button>
+              <button className={`memory-tab ${memoryTab === "dailyLogs" ? "active" : ""}`} onClick={() => setMemoryTab("dailyLogs")}>每日日志</button>
+              <button className={`memory-tab ${memoryTab === "commitments" ? "active" : ""}`} onClick={() => setMemoryTab("commitments")}>
                 待办 {commitments.length > 0 ? `(${commitments.length})` : ""}
               </button>
             </div>
-            <div style={styles.memoryBody}>
+            <div className="memory-body">
               {memoryLoading ? (
-                <div style={styles.memoryLoading}><Spinner /> 加载中...</div>
+                <div className="memory-empty"><Spinner /> 加载中...</div>
               ) : memoryTab === "longTerm" ? (
                 <>
-                  <p style={styles.memoryHint}>
-                    AI 每次会话都会读取这里的信息。你可以直接编辑，也可以让 AI 从日志自动整理。
-                  </p>
+                  <p className="memory-hint">AI 每次会话都会读取这里的信息。你可以直接编辑，也可以让 AI 从日志自动整理。</p>
                   <textarea
-                    style={styles.memoryTextarea}
+                    className="memory-textarea"
                     value={memoryDraft}
                     onChange={(e) => setMemoryDraft(e.target.value)}
                     placeholder="# 用户偏好\n- 喜欢简洁的回答\n\n# 技术背景\n- ..."
                   />
                 </>
               ) : memoryTab === "dailyLogs" ? (
-                <div style={styles.dailyLogsList}>
+                <div className="logs-list">
                   {dailyLogs.length === 0 ? (
-                    <div style={styles.memoryEmpty}>暂无日志。对话后会自动生成。</div>
+                    <div className="memory-empty">暂无日志。对话后会自动生成。</div>
                   ) : (
                     dailyLogs.map((log) => (
-                      <div key={log.date} style={styles.dailyLogItem}>
-                        <div style={styles.dailyLogDate}>{log.date}</div>
-                        <pre style={styles.dailyLogContent}>{log.content}</pre>
+                      <div key={log.date} className="log-item">
+                        <div className="log-date">{log.date}</div>
+                        <pre className="log-content">{log.content}</pre>
                       </div>
                     ))
                   )}
                 </div>
               ) : (
-                <div style={styles.dailyLogsList}>
+                <div className="logs-list">
                   {commitments.length === 0 ? (
-                    <div style={styles.memoryEmpty}>暂无待办。提到"记得提醒我"之类的事情会被自动记录。</div>
+                    <div className="memory-empty">暂无待办。提到"记得提醒我"之类的事情会被自动记录。</div>
                   ) : (
                     commitments.map((c) => (
-                      <div key={c._id} style={styles.commitmentItem}>
-                        <div style={styles.commitmentContent}>{c.content}</div>
-                        <div style={styles.commitmentActions}>
-                          <button
-                            style={styles.commitmentDoneBtn}
-                            onClick={() => fulfillCommitment(c._id)}
-                            title="完成"
-                          >
-                            ✓
-                          </button>
-                          <button
-                            style={styles.commitmentDeleteBtn}
-                            onClick={() => deleteCommitment(c._id)}
-                            title="删除"
-                          >
-                            ✕
-                          </button>
+                      <div key={c._id} className="commitment-item">
+                        <div className="commitment-content">{c.content}</div>
+                        <div className="commitment-actions">
+                          <button className="commitment-done" onClick={() => fulfillCommitment(c._id)} title="完成">✓</button>
+                          <button className="commitment-delete" onClick={() => deleteCommitment(c._id)} title="删除">✕</button>
                         </div>
                       </div>
                     ))
@@ -1194,864 +1007,33 @@ export default function App() {
                 </div>
               )}
             </div>
-            <div style={styles.memoryFooter}>
-              <button style={styles.memoryClearBtn} onClick={clearAllMemory}>
-                清空
-              </button>
+            <div className="memory-footer">
+              <button className="btn-danger" onClick={clearAllMemory}>清空</button>
               {memoryTab === "longTerm" && (
                 <div style={{ display: "flex", gap: "8px" }}>
-                  <button
-                    style={{
-                      ...styles.memoryConsolidateBtn,
-                      opacity: memoryConsolidating ? 0.6 : 1,
-                    }}
-                    onClick={consolidateMemory}
-                    disabled={memoryConsolidating}
-                  >
+                  <button className="btn-secondary" onClick={consolidateMemory} disabled={memoryConsolidating}>
                     {memoryConsolidating ? "整理中..." : "从日志整理"}
                   </button>
-                  <button
-                    style={{
-                      ...styles.memorySaveBtn,
-                      opacity: memorySaving ? 0.6 : 1,
-                    }}
-                    onClick={saveMemory}
-                    disabled={memorySaving}
-                  >
+                  <button className="btn-primary" onClick={saveMemory} disabled={memorySaving}>
                     {memorySaving ? "保存中..." : "保存"}
                   </button>
                 </div>
               )}
             </div>
           </div>
-        </div>
+        </>
       )}
+
+      {/* Team Panel */}
+      <TeamPanel
+        team={team}
+        teammates={teammates}
+        tasks={teamTasks}
+        messages={teamMessages}
+        connected={teamConnected}
+        open={teamPanelOpen}
+        onToggle={() => setTeamPanelOpen((v) => !v)}
+      />
     </div>
   );
 }
-
-// ── Styles ──
-
-const styles: Record<string, React.CSSProperties> = {
-  layout: {
-    display: "flex",
-    flexDirection: "row",
-    height: "100vh",
-    fontFamily: "'Inter', 'SF Pro Text', system-ui, -apple-system, sans-serif",
-    background: "#f7f7f8",
-    color: "#1a1a1a",
-  },
-
-  // Sidebar
-  sidebar: {
-    width: 260,
-    display: "flex",
-    flexDirection: "column",
-    background: "#fff",
-    borderRight: "1px solid #e5e5e5",
-    flexShrink: 0,
-  },
-  sidebarHeader: {
-    padding: "14px 16px",
-    borderBottom: "1px solid #e5e5e5",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  sidebarTitle: {
-    fontSize: "15px",
-    fontWeight: 700,
-    color: "#1a1a1a",
-    letterSpacing: "0.5px",
-  },
-  newChatBtn: {
-    padding: "5px 10px",
-    borderRadius: "6px",
-    border: "1px solid #d1d5db",
-    background: "#fff",
-    color: "#333",
-    cursor: "pointer",
-    fontSize: "12px",
-    fontWeight: 500,
-    whiteSpace: "nowrap",
-  },
-  sessionList: {
-    flex: 1,
-    overflowY: "auto",
-    padding: "8px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "4px",
-  },
-  sessionItem: {
-    padding: "10px 12px",
-    borderRadius: "8px",
-    cursor: "pointer",
-    display: "flex",
-    flexDirection: "column",
-    gap: "2px",
-    transition: "background 0.15s",
-  },
-  sessionItemActive: {
-    background: "#f0f7ff",
-  },
-  sessionTitle: {
-    fontSize: "13px",
-    fontWeight: 500,
-    color: "#1a1a1a",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  sessionTime: {
-    fontSize: "11px",
-    color: "#999",
-  },
-  sessionMenuBtn: {
-    position: "absolute",
-    top: "6px",
-    right: "6px",
-    padding: "2px 6px",
-    borderRadius: "4px",
-    border: "none",
-    background: "transparent",
-    color: "#888",
-    cursor: "pointer",
-    fontSize: "14px",
-    lineHeight: 1,
-    zIndex: 2,
-  },
-  sessionRenameInput: {
-    width: "100%",
-    padding: "4px 6px",
-    borderRadius: "4px",
-    border: "1px solid #007bff",
-    fontSize: "13px",
-    outline: "none",
-    fontFamily: "inherit",
-    boxSizing: "border-box",
-  },
-  sessionMenuDropdown: {
-    position: "absolute",
-    top: "28px",
-    right: "6px",
-    background: "#fff",
-    border: "1px solid #e5e5e5",
-    borderRadius: "6px",
-    boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-    padding: "4px",
-    zIndex: 10,
-    minWidth: "100px",
-  },
-  sessionMenuItem: {
-    width: "100%",
-    padding: "6px 10px",
-    borderRadius: "4px",
-    border: "none",
-    background: "transparent",
-    color: "#333",
-    cursor: "pointer",
-    fontSize: "13px",
-    textAlign: "left" as const,
-    display: "flex",
-    alignItems: "center",
-    gap: "4px",
-  },
-  sessionMenuDelete: {
-    width: "100%",
-    padding: "6px 10px",
-    borderRadius: "4px",
-    border: "none",
-    background: "transparent",
-    color: "#dc2626",
-    cursor: "pointer",
-    fontSize: "13px",
-    textAlign: "left" as const,
-    display: "flex",
-    alignItems: "center",
-    gap: "4px",
-  },
-  thinkingControls: {
-    padding: "10px 16px",
-    borderTop: "1px solid #e5e5e5",
-    display: "flex",
-    flexDirection: "column",
-    gap: "8px",
-  },
-  thinkingRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  thinkingLabel: {
-    fontSize: "13px",
-    fontWeight: 500,
-    color: "#333",
-  },
-  thinkingToggle: {
-    width: "34px",
-    height: "20px",
-    borderRadius: "10px",
-    border: "none",
-    cursor: "pointer",
-    position: "relative",
-    transition: "background 0.2s",
-    padding: 0,
-  },
-  thinkingToggleKnob: {
-    display: "block",
-    width: "16px",
-    height: "16px",
-    borderRadius: "50%",
-    background: "#fff",
-    transition: "transform 0.2s",
-    margin: "2px",
-  },
-  effortRow: {
-    display: "flex",
-    gap: "4px",
-  },
-  effortBtn: {
-    flex: 1,
-    padding: "4px 8px",
-    borderRadius: "4px",
-    border: "1px solid #e5e5e5",
-    cursor: "pointer",
-    fontSize: "12px",
-    fontWeight: 500,
-    transition: "all 0.15s",
-  },
-  sidebarFooter: {
-    padding: "12px 16px",
-    borderTop: "1px solid #e5e5e5",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-
-  // Main chat area
-  main: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    minWidth: 0,
-    background: "#ffffff",
-  },
-
-  // Messages area
-  messages: {
-    flex: 1,
-    overflowY: "auto",
-    padding: "16px 20px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "16px",
-  },
-  empty: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "#999",
-    gap: 12,
-    fontSize: "14px",
-  },
-  emptyIcon: {
-    fontSize: "32px",
-    fontWeight: 700,
-    color: "#ccc",
-    border: "2px solid #e5e5e5",
-    borderRadius: "12px",
-    padding: "12px 20px",
-    letterSpacing: "2px",
-  },
-
-  // Message rows
-  userRow: {
-    display: "flex",
-    gap: 10,
-    justifyContent: "flex-end",
-  },
-  assistantRow: {
-    display: "flex",
-    gap: 10,
-    justifyContent: "flex-start",
-  },
-  avatar: {
-    width: 28,
-    height: 28,
-    borderRadius: "50%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: "11px",
-    fontWeight: 600,
-    flexShrink: 0,
-    background: "#007bff",
-    color: "#fff",
-  },
-  userBubble: {
-    background: "#007bff",
-    color: "#fff",
-    padding: "10px 14px",
-    borderRadius: "12px",
-    maxWidth: "70%",
-    fontSize: "14px",
-    lineHeight: 1.5,
-    wordBreak: "break-word",
-  },
-  assistantBubble: {
-    maxWidth: "80%",
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-    background: "#fff",
-    border: "1px solid #e5e5e5",
-    borderRadius: "12px",
-    padding: "14px 16px",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-  },
-  textBlock: {
-    fontSize: "14px",
-    lineHeight: 1.6,
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-  },
-  typing: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    color: "#999",
-    fontStyle: "italic",
-    fontSize: "13px",
-  },
-
-  // Tool call block (Claude Code style)
-  toolBlock: {
-    marginTop: 2,
-    marginBottom: 2,
-    borderRadius: "6px",
-    border: "1px solid #e5e5e5",
-    overflow: "hidden",
-    fontSize: "13px",
-  },
-  toolRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    padding: "7px 10px",
-    cursor: "pointer",
-    userSelect: "none",
-    background: "#fafafa",
-    transition: "background 0.1s",
-  },
-  toolLabel: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    flex: 1,
-    minWidth: 0,
-  },
-  toolNameText: {
-    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
-    fontWeight: 500,
-    fontSize: "12.5px",
-    color: "#1a1a1a",
-    flexShrink: 0,
-  },
-  toolPreview: {
-    color: "#888",
-    fontSize: "12px",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  toolRunning: {
-    color: "#007bff",
-    fontSize: "12px",
-    fontStyle: "italic",
-  },
-  toolDetails: {
-    borderTop: "1px solid #e5e5e5",
-    padding: "8px 12px",
-    background: "#fff",
-  },
-  detailSection: {
-    marginBottom: 6,
-  },
-  detailLabel: {
-    fontSize: "11px",
-    fontWeight: 600,
-    textTransform: "uppercase",
-    letterSpacing: "0.5px",
-    color: "#888",
-    marginBottom: 4,
-  },
-
-  // Reasoning block
-  reasoningBlock: {
-    borderRadius: "6px",
-    border: "1px solid #fde68a",
-    overflow: "hidden",
-    fontSize: "13px",
-  },
-  reasoningRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    padding: "7px 10px",
-    cursor: "pointer",
-    userSelect: "none",
-    background: "#fffbeb",
-    transition: "background 0.1s",
-  },
-  reasoningLabel: {
-    display: "flex",
-    alignItems: "center",
-    fontWeight: 500,
-    fontSize: "12.5px",
-    color: "#92400e",
-  },
-  reasoningBody: {
-    borderTop: "1px solid #fde68a",
-    padding: "8px 12px",
-    background: "#fff",
-  },
-
-  // Code block (shared)
-  codeBlock: {
-    margin: 0,
-    padding: "8px 10px",
-    background: "#f5f5f5",
-    borderRadius: "4px",
-    overflow: "auto",
-    maxHeight: "240px",
-    fontSize: "12px",
-    lineHeight: 1.5,
-    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    border: "1px solid #eee",
-  },
-
-  // Input bar
-  inputBar: {
-    display: "flex",
-    padding: "12px 20px",
-    borderTop: "1px solid #e5e5e5",
-    gap: "8px",
-    background: "#fafafa",
-  },
-  input: {
-    flex: 1,
-    padding: "10px 14px",
-    borderRadius: "8px",
-    border: "1px solid #d1d5db",
-    fontSize: "14px",
-    outline: "none",
-    background: "#fff",
-    fontFamily: "inherit",
-    transition: "border-color 0.15s",
-  },
-  button: {
-    padding: "10px 20px",
-    borderRadius: "8px",
-    border: "none",
-    background: "#007bff",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 600,
-    fontSize: "14px",
-    transition: "opacity 0.15s",
-  },
-  stopButton: {
-    padding: "10px 20px",
-    borderRadius: "8px",
-    border: "none",
-    background: "#dc2626",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 600,
-    fontSize: "14px",
-    transition: "opacity 0.15s",
-  },
-
-  // User info in header
-  userInfo: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    marginLeft: "auto",
-  },
-  username: {
-    fontSize: "13px",
-    color: "#555",
-    fontWeight: 500,
-  },
-  logoutBtn: {
-    padding: "4px 10px",
-    borderRadius: "6px",
-    border: "1px solid #d1d5db",
-    background: "#fff",
-    color: "#555",
-    cursor: "pointer",
-    fontSize: "12px",
-    fontWeight: 500,
-  },
-
-  // Login page
-  loginContainer: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    height: "100vh",
-    fontFamily: "'Inter', 'SF Pro Text', system-ui, -apple-system, sans-serif",
-    background: "#f7f7f8",
-    color: "#1a1a1a",
-  },
-  loginCard: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: "16px",
-    background: "#fff",
-    padding: "40px 36px",
-    borderRadius: "16px",
-    boxShadow: "0 4px 24px rgba(0,0,0,0.06)",
-    width: "100%",
-    maxWidth: "360px",
-  },
-  loginIcon: {
-    fontSize: "28px",
-    fontWeight: 700,
-    color: "#007bff",
-    letterSpacing: "2px",
-  },
-  loginTitle: {
-    fontSize: "22px",
-    fontWeight: 600,
-    margin: 0,
-    color: "#1a1a1a",
-  },
-  loginSubtitle: {
-    fontSize: "14px",
-    color: "#888",
-    margin: 0,
-    marginTop: -8,
-  },
-  loginInput: {
-    width: "100%",
-    padding: "12px 14px",
-    borderRadius: "10px",
-    border: "1px solid #d1d5db",
-    fontSize: "15px",
-    outline: "none",
-    background: "#fff",
-    fontFamily: "inherit",
-    boxSizing: "border-box",
-    transition: "border-color 0.15s",
-  },
-  loginButton: {
-    width: "100%",
-    padding: "12px 20px",
-    borderRadius: "10px",
-    border: "none",
-    background: "#007bff",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 600,
-    fontSize: "15px",
-    transition: "opacity 0.15s",
-  },
-  loginError: {
-    color: "#dc2626",
-    fontSize: "13px",
-    width: "100%",
-    textAlign: "center" as const,
-  },
-
-  // Memory
-  memorySection: {
-    padding: "8px 16px",
-    borderTop: "1px solid #e5e5e5",
-  },
-  memoryBtn: {
-    width: "100%",
-    padding: "8px 12px",
-    borderRadius: "6px",
-    border: "1px solid #e5e5e5",
-    background: "#fafafa",
-    color: "#555",
-    cursor: "pointer",
-    fontSize: "13px",
-    fontWeight: 500,
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    transition: "background 0.15s",
-  },
-  memoryOverlay: {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    background: "rgba(0,0,0,0.35)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 100,
-  },
-  memoryModal: {
-    background: "#fff",
-    borderRadius: "12px",
-    width: "100%",
-    maxWidth: "520px",
-    maxHeight: "80vh",
-    display: "flex",
-    flexDirection: "column",
-    boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
-  },
-  memoryHeader: {
-    padding: "16px 20px",
-    borderBottom: "1px solid #e5e5e5",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  memoryTitle: {
-    margin: 0,
-    fontSize: "16px",
-    fontWeight: 600,
-    color: "#1a1a1a",
-  },
-  memoryCloseBtn: {
-    padding: "4px 8px",
-    borderRadius: "6px",
-    border: "none",
-    background: "transparent",
-    color: "#888",
-    cursor: "pointer",
-    fontSize: "16px",
-    lineHeight: 1,
-  },
-  memoryBody: {
-    flex: 1,
-    overflowY: "auto",
-    padding: "16px 20px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-  },
-  memoryLoading: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: "8px",
-    color: "#888",
-    fontSize: "14px",
-    padding: "40px 0",
-  },
-  memoryHint: {
-    margin: 0,
-    fontSize: "12px",
-    color: "#888",
-    lineHeight: 1.5,
-  },
-  memoryTextarea: {
-    width: "100%",
-    flex: 1,
-    padding: "12px",
-    borderRadius: "8px",
-    border: "1px solid #d1d5db",
-    fontSize: "13px",
-    lineHeight: 1.6,
-    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
-    resize: "none" as const,
-    outline: "none",
-    boxSizing: "border-box",
-  },
-  memoryFooter: {
-    padding: "12px 20px",
-    borderTop: "1px solid #e5e5e5",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "10px",
-  },
-  memoryClearBtn: {
-    padding: "6px 12px",
-    borderRadius: "6px",
-    border: "1px solid #fecaca",
-    background: "#fef2f2",
-    color: "#dc2626",
-    cursor: "pointer",
-    fontSize: "12px",
-    fontWeight: 500,
-  },
-  memorySaveBtn: {
-    padding: "6px 16px",
-    borderRadius: "6px",
-    border: "none",
-    background: "#007bff",
-    color: "#fff",
-    cursor: "pointer",
-    fontSize: "13px",
-    fontWeight: 600,
-  },
-  memoryConsolidateBtn: {
-    padding: "6px 12px",
-    borderRadius: "6px",
-    border: "1px solid #d1d5db",
-    background: "#f9fafb",
-    color: "#555",
-    cursor: "pointer",
-    fontSize: "13px",
-    fontWeight: 500,
-  },
-  memoryTabs: {
-    display: "flex",
-    borderBottom: "1px solid #e5e5e5",
-    padding: "0 20px",
-    gap: "4px",
-  },
-  memoryTab: {
-    padding: "10px 14px",
-    border: "none",
-    borderBottom: "2px solid transparent",
-    background: "transparent",
-    color: "#888",
-    cursor: "pointer",
-    fontSize: "13px",
-    fontWeight: 500,
-    marginBottom: "-1px",
-  },
-  memoryTabActive: {
-    color: "#007bff",
-    borderBottomColor: "#007bff",
-  },
-  dailyLogsList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "12px",
-  },
-  dailyLogItem: {
-    padding: "12px",
-    borderRadius: "8px",
-    border: "1px solid #e5e5e5",
-    background: "#fafafa",
-  },
-  dailyLogDate: {
-    fontSize: "12px",
-    fontWeight: 600,
-    color: "#555",
-    marginBottom: "6px",
-  },
-  dailyLogContent: {
-    margin: 0,
-    fontSize: "12px",
-    lineHeight: 1.5,
-    color: "#666",
-    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    maxHeight: "200px",
-    overflow: "auto",
-  },
-  commitmentItem: {
-    padding: "12px",
-    borderRadius: "8px",
-    border: "1px solid #e5e5e5",
-    background: "#fafafa",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "10px",
-  },
-  commitmentContent: {
-    fontSize: "13px",
-    color: "#333",
-    lineHeight: 1.5,
-    flex: 1,
-  },
-  commitmentActions: {
-    display: "flex",
-    gap: "6px",
-    flexShrink: 0,
-  },
-  commitmentDoneBtn: {
-    padding: "4px 8px",
-    borderRadius: "4px",
-    border: "1px solid #16a34a",
-    background: "#f0fdf4",
-    color: "#16a34a",
-    cursor: "pointer",
-    fontSize: "13px",
-    fontWeight: 600,
-  },
-  commitmentDeleteBtn: {
-    padding: "4px 8px",
-    borderRadius: "4px",
-    border: "1px solid #d1d5db",
-    background: "#fff",
-    color: "#888",
-    cursor: "pointer",
-    fontSize: "13px",
-  },
-  skillsSection: {
-    padding: "10px 16px",
-    borderTop: "1px solid #e5e5e5",
-  },
-  skillsLabel: {
-    fontSize: "11px",
-    fontWeight: 600,
-    color: "#888",
-    textTransform: "uppercase" as const,
-    letterSpacing: "0.5px",
-    marginBottom: "8px",
-  },
-  skillsEmpty: {
-    fontSize: "12px",
-    color: "#bbb",
-    padding: "4px 0",
-  },
-  skillsList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-  },
-  skillRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "8px",
-  },
-  skillName: {
-    fontSize: "12px",
-    color: "#555",
-    fontWeight: 500,
-  },
-  skillToggle: {
-    width: "34px",
-    height: "20px",
-    borderRadius: "10px",
-    border: "none",
-    cursor: "pointer",
-    position: "relative",
-    transition: "background 0.2s",
-    padding: 0,
-    flexShrink: 0,
-  },
-  skillToggleKnob: {
-    display: "block",
-    width: "16px",
-    height: "16px",
-    borderRadius: "50%",
-    background: "#fff",
-    transition: "transform 0.2s",
-    margin: "2px",
-  },
-};
