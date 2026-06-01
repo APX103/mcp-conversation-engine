@@ -1,4 +1,4 @@
-# Cognitive Agent Platform (CAP) v1.0
+# Nexus
 
 基于 **Model Context Protocol (MCP)** 架构的下一代认知智能体平台，具备**神经记忆网络 (Neural Memory Network)**、**自主工具编排 (Autonomous Tool Orchestration)** 和**链式思维推理 (Chain-of-Thought Reasoning)** 能力。
 
@@ -155,4 +155,4 @@ cp config.example.json config.json
 
 ---
 
-*Powered by Cognitive Architecture | Built with Model Context Protocol*
+*Powered by Nexus Cognitive Architecture | Built with Model Context Protocol*

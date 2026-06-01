@@ -70,7 +70,7 @@ export class McpManager {
     transport: StdioClientTransport | StreamableHTTPClientTransport,
   ): Promise<void> {
 
-    const client = new Client({ name: "mcp-conversation-engine", version: "1.0.0" });
+    const client = new Client({ name: "nexus", version: "1.0.0" });
     await client.connect(transport);
 
     const toolsList = await client.listTools();
