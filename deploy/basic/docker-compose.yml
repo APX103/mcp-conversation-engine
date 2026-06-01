@@ -1,16 +1,7 @@
-# MCP Conversation Engine — Single Instance Deployment
-#
-# docker compose up -d
-
-x-backend-common: &backend-common
-  build: ./backend
-  restart: unless-stopped
-  environment:
-    - MAX_TOOL_ROUNDS=100
 
 services:
   mongodb:
-    image: mongo:8.2.7-noble
+    image: mongo:8.3.1-noble
     volumes:
       - mongo-data:/data/db
     healthcheck:
@@ -20,7 +11,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:8.4.2-alpine3.22
+    image: redis:8.8-alpine
     volumes:
       - redis-data:/data
     healthcheck:
@@ -30,7 +21,10 @@ services:
       retries: 5
 
   backend:
-    <<: *backend-common
+    build: ../../backend
+    restart: unless-stopped
+    environment:
+      - MAX_TOOL_ROUNDS=100
     ports:
       - "3000:3000"
       - "9990-9999:9990-9999"
@@ -44,7 +38,7 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: ../../frontend
       args:
         VITE_API_BASE: "http://localhost:3000"
     ports:

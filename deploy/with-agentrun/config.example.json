@@ -1,0 +1,55 @@
+{
+  "llm": {
+    "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+    "apiKey": "YOUR_API_KEY_HERE",
+    "model": "glm-5-turbo"
+  },
+  "mongodb": {
+    "uri": "mongodb://mongodb:27017",
+    "dbName": "mcp-engine"
+  },
+  "redis": {
+    "url": "redis://redis:6379"
+  },
+  "mcpServers": {
+    "web-search-prime": {
+      "transport": "http",
+      "url": "https://open.bigmodel.cn/api/mcp/web_search_prime/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY_HERE"
+      }
+    },
+    "agentrun": {
+      "transport": "http",
+      "url": "http://agentrun-mcp:3000/mcp"
+    }
+  },
+  "server": {
+    "port": 3000
+  },
+  "builtinTools": {
+    "mode": "whitelist",
+    "enabled": [
+      "tool_search",
+      "read_file",
+      "list_directory",
+      "fetch_url",
+      "skill_list",
+      "skill_create",
+      "skill_update",
+      "skill_delete",
+      "create_service",
+      "list_services",
+      "stop_service",
+      "service_logs"
+    ]
+  },
+  "cognitive": {
+    "enabled": true,
+    "retrieval": {
+      "vector": {
+        "enabled": false
+      }
+    }
+  }
+}
