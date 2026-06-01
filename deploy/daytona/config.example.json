@@ -1,0 +1,31 @@
+{
+  "llm": {
+    "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+    "apiKey": "YOUR_API_KEY_HERE",
+    "model": "glm-5-turbo"
+  },
+  "mongodb": {
+    "uri": "mongodb://mongodb:27017",
+    "dbName": "mcp-engine"
+  },
+  "redis": {
+    "url": "redis://redis:6379"
+  },
+  "mcpServers": {
+    "daytona": {
+      "transport": "http",
+      "url": "http://daytona-mcp:3100/mcp"
+    }
+  },
+  "server": {
+    "port": 3000
+  },
+  "cognitive": {
+    "enabled": true,
+    "retrieval": {
+      "vector": {
+        "enabled": false
+      }
+    }
+  }
+}

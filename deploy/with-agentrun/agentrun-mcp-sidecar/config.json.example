@@ -1,0 +1,7 @@
+{
+  "apiKey": "你的AgentRun API Key",
+  "accountId": "你的阿里云主账号ID",
+  "region": "cn-shanghai",
+  "templateName": "default-code-interpreter",
+  "sandboxIdleTimeout": 3600
+}
